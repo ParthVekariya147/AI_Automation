@@ -29,6 +29,17 @@ function resolveSafeFrontendOrigin(origin?: string) {
   return isConfigured || isLanDevOrigin ? origin : env.CLIENT_URL;
 }
 
+function buildDriveBrowserRedirect(
+  frontendOrigin: string | undefined,
+  params: Record<string, string>
+) {
+  const target = new URL("/drive-browser", resolveSafeFrontendOrigin(frontendOrigin));
+  for (const [key, value] of Object.entries(params)) {
+    target.searchParams.set(key, value);
+  }
+  return target.toString();
+}
+
 const instagramSchema = z.object({
   businessId: z.string().min(1),
   name: z.string().min(2),
@@ -176,48 +187,106 @@ export const startDriveOAuth = asyncHandler(async (req: AuthedRequest, res: Resp
 export const driveOAuthCallback = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const code = req.query.code?.toString();
   const state = req.query.state?.toString();
+  const oauthError = req.query.error?.toString();
 
-  if (!code || !state) {
-    throw new ApiError(400, "Google Drive callback is missing code or state");
+  let parsedState:
+    | {
+      businessId: string;
+      userId: string;
+      frontendOrigin?: string;
+    }
+    | undefined;
+
+  if (state) {
+    try {
+      parsedState = verifyGoogleDriveState(state);
+    } catch {
+      return res.redirect(
+        buildDriveBrowserRedirect(undefined, {
+          connected: "0",
+          error: "invalid_state"
+        })
+      );
+    }
   }
 
-  const parsedState = verifyGoogleDriveState(state);
-  const { tokens, email } = await fetchGoogleProfile(code);
-  const existingConnection = await GoogleDriveConnectionModel.findOne({
-    businessId: parsedState.businessId,
-    accountEmail: email
-  });
+  if (oauthError) {
+    return res.redirect(
+      buildDriveBrowserRedirect(parsedState?.frontendOrigin, {
+        connected: "0",
+        error: oauthError
+      })
+    );
+  }
 
-  const connection = await GoogleDriveConnectionModel.findOneAndUpdate(
-    {
+  if (!code || !parsedState) {
+    return res.redirect(
+      buildDriveBrowserRedirect(parsedState?.frontendOrigin, {
+        connected: "0",
+        error: "missing_code_or_state"
+      })
+    );
+  }
+
+  try {
+    const { tokens, email } = await fetchGoogleProfile(code);
+    const existingConnection = await GoogleDriveConnectionModel.findOne({
       businessId: parsedState.businessId,
       accountEmail: email
-    },
-    {
-      businessId: parsedState.businessId,
-      accountEmail: email,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? existingConnection?.refreshToken,
-      folderId: existingConnection?.folderId,
-      tokenExpiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
-      isActive: true
-    },
-    {
-      new: true,
-      upsert: true
+    });
+    const refreshToken = tokens.refresh_token ?? existingConnection?.refreshToken;
+
+    if (!refreshToken) {
+      return res.redirect(
+        buildDriveBrowserRedirect(parsedState.frontendOrigin, {
+          connected: "0",
+          error: "missing_refresh_token"
+        })
+      );
     }
-  );
 
-  await createAuditLog({
-    actorUserId: parsedState.userId,
-    businessId: parsedState.businessId,
-    action: "drive.oauth_connected",
-    entityType: "GoogleDriveConnection",
-    entityId: connection.id,
-    metadata: { accountEmail: email }
-  });
+    const connection = await GoogleDriveConnectionModel.findOneAndUpdate(
+      {
+        businessId: parsedState.businessId,
+        accountEmail: email
+      },
+      {
+        businessId: parsedState.businessId,
+        accountEmail: email,
+        accessToken: tokens.access_token,
+        refreshToken,
+        folderId: existingConnection?.folderId,
+        tokenExpiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+        isActive: true
+      },
+      {
+        new: true,
+        upsert: true
+      }
+    );
 
-  res.redirect(`${resolveSafeFrontendOrigin(parsedState.frontendOrigin)}/drive-browser?connected=1`);
+    await createAuditLog({
+      actorUserId: parsedState.userId,
+      businessId: parsedState.businessId,
+      action: "drive.oauth_connected",
+      entityType: "GoogleDriveConnection",
+      entityId: connection.id,
+      metadata: { accountEmail: email }
+    });
+
+    return res.redirect(
+      buildDriveBrowserRedirect(parsedState.frontendOrigin, {
+        connected: "1"
+      })
+    );
+  } catch {
+    return res.redirect(
+      buildDriveBrowserRedirect(parsedState.frontendOrigin, {
+        connected: "0",
+        error: "oauth_callback_failed"
+      })
+    );
+  }
 });
 
 export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: Response) => {

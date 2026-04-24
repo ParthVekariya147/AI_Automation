@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { api } from "../lib/api";
 import type { DriveFile, DriveFolder } from "../lib/types";
@@ -8,6 +9,7 @@ import { useAuthStore } from "../store/auth-store";
 export function DriveBrowserPage() {
   const queryClient = useQueryClient();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
+  const [searchParams] = useSearchParams();
   const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>();
   const [selectedFolderName, setSelectedFolderName] = useState<string>("Root");
 
@@ -51,6 +53,37 @@ export function DriveBrowserPage() {
 
   const hasConnection = Boolean(connections?.length);
   const hasOAuthReadyConnection = Boolean(oauthReadyConnection);
+  const oauthStatus = searchParams.get("connected");
+  const oauthError = searchParams.get("error");
+  const oauthFeedback = useMemo(() => {
+    if (oauthStatus === "1") {
+      return {
+        tone: "success" as const,
+        text: "Google Drive connected successfully."
+      };
+    }
+
+    if (oauthStatus === "0") {
+      const errorMessages: Record<string, string> = {
+        missing_code_or_state: "Google callback was incomplete. Start OAuth again from this page.",
+        invalid_state: "Google callback state was invalid or expired. Start OAuth again.",
+        access_denied: "Permission was denied on Google consent screen.",
+        missing_refresh_token:
+          "Google did not return a refresh token. Remove this app from your Google Account permissions, then reconnect.",
+        oauth_callback_failed: "Google OAuth completed but account sync failed. Try reconnecting."
+      };
+
+      return {
+        tone: "error" as const,
+        text:
+          errorMessages[oauthError || ""] ||
+          "Google Drive connection did not complete. Click Connect Google Drive and try again."
+      };
+    }
+
+    return undefined;
+  }, [oauthError, oauthStatus]);
+
   const mediaFiles = useMemo(
     () =>
       (files || []).filter(
@@ -89,6 +122,17 @@ export function DriveBrowserPage() {
 
   return (
     <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
+      {oauthFeedback ? (
+        <div
+          className={`xl:col-span-2 rounded-2xl px-4 py-3 text-sm ${oauthFeedback.tone === "success"
+            ? "bg-emerald-50 text-emerald-900"
+            : "bg-red-50 text-red-700"
+            }`}
+        >
+          {oauthFeedback.text}
+        </div>
+      ) : null}
+
       <Panel
         title="Google Drive folders"
         description="Browse folders first, then preview and import the images or videos you want to plan from the queue."
@@ -105,7 +149,7 @@ export function DriveBrowserPage() {
             ? `${connections.length} Drive connection${connections.length > 1 ? "s" : ""} found`
             : hasConnection
               ? "A Drive record exists, but OAuth is not complete yet. Reconnect from this page."
-            : "No Drive connection is active for this business yet"}
+              : "No Drive connection is active for this business yet"}
         </div>
 
         <div className="mt-6 space-y-2">
@@ -114,11 +158,10 @@ export function DriveBrowserPage() {
               setSelectedFolderId(undefined);
               setSelectedFolderName("Root");
             }}
-            className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${
-              !selectedFolderId
-                ? "bg-emerald-50 text-emerald-900"
-                : "bg-[#f6f7f2] text-slate-700 hover:bg-emerald-50/60"
-            }`}
+            className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${!selectedFolderId
+              ? "bg-emerald-50 text-emerald-900"
+              : "bg-[#f6f7f2] text-slate-700 hover:bg-emerald-50/60"
+              }`}
           >
             Root folder
           </button>
@@ -129,11 +172,10 @@ export function DriveBrowserPage() {
                 setSelectedFolderId(folder.id);
                 setSelectedFolderName(folder.name);
               }}
-              className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${
-                selectedFolderId === folder.id
-                  ? "bg-emerald-50 text-emerald-900"
-                  : "bg-[#f6f7f2] text-slate-700 hover:bg-emerald-50/60"
-              }`}
+              className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${selectedFolderId === folder.id
+                ? "bg-emerald-50 text-emerald-900"
+                : "bg-[#f6f7f2] text-slate-700 hover:bg-emerald-50/60"
+                }`}
             >
               {folder.name}
             </button>

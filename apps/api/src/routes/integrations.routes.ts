@@ -14,6 +14,9 @@ import { requireAuth, requireBusinessRole } from "../middlewares/auth.js";
 export const instagramRouter = Router();
 export const driveRouter = Router();
 
+// Google redirects to this URL without our JWT header, so callback must stay public.
+driveRouter.get("/oauth/callback", driveOAuthCallback);
+
 instagramRouter.use(requireAuth);
 driveRouter.use(requireAuth);
 
@@ -43,7 +46,6 @@ driveRouter.get(
   requireBusinessRole("admin", "super_admin"),
   startDriveOAuth
 );
-driveRouter.get("/oauth/callback", driveOAuthCallback);
 driveRouter.get(
   "/folders",
   requireBusinessRole("admin", "user", "super_admin"),
