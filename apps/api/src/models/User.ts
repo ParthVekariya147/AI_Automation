@@ -16,8 +16,8 @@ const userSchema = new Schema<UserEntity>(
     passwordHash: { type: String, required: true },
     globalRole: {
       type: String,
-      enum: ["super_admin", "admin", "user"],
-      default: "user"
+      enum: ["admin"],
+      default: "admin"
     },
     isActive: { type: Boolean, default: true }
   },

@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import type { HydratedDocument, Types } from "mongoose";
 
-export type Role = "super_admin" | "admin" | "user";
+export type Role = "admin";
 export type MembershipStatus = "active" | "invited" | "disabled";
 export type MediaSource = "local" | "google_drive" | "instagram_direct";
 export type MediaType = "image" | "video";

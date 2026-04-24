@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.5",

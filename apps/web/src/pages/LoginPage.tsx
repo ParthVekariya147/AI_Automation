@@ -30,10 +30,8 @@ export function LoginPage() {
         <p className="text-xs uppercase tracking-[0.3em] text-brand-600">Platform Access</p>
         <h1 className="mt-2 text-3xl font-semibold text-slate-900">Sign in to manage brands</h1>
         <div className="mt-4 rounded-2xl bg-[#f6f7f2] px-4 py-3 text-sm leading-6 text-slate-700">
-          Same login page for all roles:
-          <div className="mt-2">`super_admin` logs in here after setup</div>
-          <div>`admin` logs in here after being created from the Businesses page</div>
-          <div>`user` also logs in here with the credentials created under a business</div>
+          Single admin login:
+          <div className="mt-2">Use the admin account created during setup or from the Businesses page.</div>
         </div>
         <form className="mt-8 space-y-4" onSubmit={handleSubmit}>
           <input
@@ -56,7 +54,7 @@ export function LoginPage() {
           </button>
         </form>
         <Link className="mt-4 block text-center text-sm text-brand-700" to="/setup">
-          Create the first super admin
+          Create the first admin
         </Link>
       </div>
     </div>

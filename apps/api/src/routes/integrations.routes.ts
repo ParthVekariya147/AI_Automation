@@ -4,9 +4,11 @@ import {
   browseDriveFolders,
   connectDrive,
   connectInstagramAccount,
+  disconnectDrive,
   driveOAuthCallback,
   listDriveConnections,
   listInstagramAccounts,
+  previewDriveFile,
   startDriveOAuth
 } from "../controllers/integrations.controller.js";
 import { requireAuth, requireBusinessRole } from "../middlewares/auth.js";
@@ -22,37 +24,19 @@ driveRouter.use(requireAuth);
 
 instagramRouter.get(
   "/accounts",
-  requireBusinessRole("admin", "user", "super_admin"),
+  requireBusinessRole("admin"),
   listInstagramAccounts
 );
-instagramRouter.post(
-  "/connect",
-  requireBusinessRole("admin", "super_admin"),
-  connectInstagramAccount
-);
+instagramRouter.post("/connect", requireBusinessRole("admin"), connectInstagramAccount);
 
 driveRouter.get(
   "/connections",
-  requireBusinessRole("admin", "user", "super_admin"),
+  requireBusinessRole("admin"),
   listDriveConnections
 );
-driveRouter.post(
-  "/connect",
-  requireBusinessRole("admin", "super_admin"),
-  connectDrive
-);
-driveRouter.get(
-  "/oauth/start",
-  requireBusinessRole("admin", "super_admin"),
-  startDriveOAuth
-);
-driveRouter.get(
-  "/folders",
-  requireBusinessRole("admin", "user", "super_admin"),
-  browseDriveFolders
-);
-driveRouter.get(
-  "/files",
-  requireBusinessRole("admin", "user", "super_admin"),
-  browseDriveFiles
-);
+driveRouter.post("/connect", requireBusinessRole("admin"), connectDrive);
+driveRouter.post("/disconnect", requireBusinessRole("admin"), disconnectDrive);
+driveRouter.get("/oauth/start", requireBusinessRole("admin"), startDriveOAuth);
+driveRouter.get("/preview", requireBusinessRole("admin"), previewDriveFile);
+driveRouter.get("/folders", requireBusinessRole("admin"), browseDriveFolders);
+driveRouter.get("/files", requireBusinessRole("admin"), browseDriveFiles);

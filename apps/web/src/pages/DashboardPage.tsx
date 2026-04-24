@@ -33,7 +33,7 @@ export function DashboardPage() {
       <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel
           title="Operational summary"
-          description="This is the command center for everything inside the selected business. Import files from Drive, assign group IDs for carousels, and manage the queue from one table."
+          description="This is the command center for the current workspace. Import files from Drive, assign group IDs for carousels, and manage the queue from one table."
         >
           <div className="grid gap-4 md:grid-cols-5">
             <StatCard label="All Files" value={queueItems?.length ?? 0} />
@@ -60,7 +60,7 @@ export function DashboardPage() {
       <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <Panel
           title="Upcoming schedule"
-          description="The next items in the queue for the selected business."
+          description="The next items in the queue for the current workspace."
         >
           {!upcoming.length ? (
             <EmptyState

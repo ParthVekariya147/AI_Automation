@@ -84,7 +84,8 @@ After the first account exists, the bootstrap route is disabled.
 ## Current Workflow
 
 1. `super_admin` logs in and creates the first business.
-2. `admin` connects Google Drive and Instagram accounts.
-3. `admin` opens `Drive Browser` to preview folders/files and import the right media.
-4. Team uses `Content Queue` to manage scheduling, grouping, captions, and performance fields.
-5. Team opens any queue row to edit full details on the file detail page.
+2. `admin` opens `Drive Browser`.
+3. `admin` connects Google Drive and checks `Connected / Not connected / Disconnected`.
+4. the app fetches Drive folders/files and displays that data.
+5. team imports the required media into the queue.
+6. team uses `Content Queue` to manage scheduling, grouping, captions, and performance fields.

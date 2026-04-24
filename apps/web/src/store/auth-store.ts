@@ -21,10 +21,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   memberships: [],
   setSession: ({ token, user, memberships }) => {
     setApiToken(token);
-    const saved = localStorage.getItem("automation.activeBusinessId");
-    const fallbackBusinessId =
-      memberships.find((item) => item.businessId._id === saved)?.businessId._id ||
-      memberships[0]?.businessId?._id;
+    const fallbackBusinessId = memberships[0]?.businessId?._id;
     set({
       token,
       user,
@@ -56,16 +53,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!session.token) return;
 
     setApiToken(session.token);
-    const saved = localStorage.getItem("automation.activeBusinessId");
     const response = await api.get("/auth/me");
     set({
       token: session.token,
       user: response.data.data.user,
       memberships: response.data.data.memberships,
-      activeBusinessId:
-        response.data.data.memberships.find(
-          (item: Membership) => item.businessId._id === saved
-        )?.businessId?._id || response.data.data.memberships[0]?.businessId?._id
+      activeBusinessId: response.data.data.memberships[0]?.businessId?._id
     });
   }
 }));

@@ -4,17 +4,18 @@ Aa file ma full samjan aapi chhe ke app nu workflow kai rite kaam kare chhe, kai
 
 ## 1. System No Main Idea
 
-Aa product no main flow `Google Drive -> Import File -> Content Queue -> Detail View -> Schedule / Post` par aadharit chhe.
+Aa product no main flow `Connect Drive -> Fetch Data -> Display Files -> Import File -> Content Queue -> Detail View -> Schedule / Post` par aadharit chhe.
 
 Simple ma:
 
-1. Drive ma folders and files hase
-2. Tame Drive Browser page par jai ne folder kholo
-3. Image/video preview karo
-4. Je file use karvi hoi tene queue ma import karo
-5. Queue table ma badha planning fields bharo
-6. Detail page ma jai ne ek-ek item ni full planning karo
-7. Schedule/post workflow chalavo
+1. Admin Drive connect kare
+2. App Drive mathi folders/files fetch kare
+3. Drive Browser page par data display thay
+4. Image/video preview karo
+5. Je file use karvi hoi tene queue ma import karo
+6. Queue table ma badha planning fields bharo
+7. Detail page ma jai ne ek-ek item ni full planning karo
+8. Schedule/post workflow chalavo
 
 ## 2. User Roles
 
@@ -152,10 +153,15 @@ Aa sauthi important page chhe jo tame Drive-first workflow use karo chho.
 Aa page par tame:
 
 - Google Drive connect karo
-- folders browse karo
-- files preview karo
+- connection status joyo: `Connected / Not connected / Disconnected`
+- folders/files fetch karo
+- fetched data display joyo
 - image/video open karo
 - queue ma import karo
+
+Aa page no simple goal:
+
+- Task 1 = connection and fetch data using Drive and display the data
 
 ### Left Section
 

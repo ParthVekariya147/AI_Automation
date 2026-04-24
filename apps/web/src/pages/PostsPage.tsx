@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Panel } from "../components/Panel";
 import { api } from "../lib/api";
+import { formatSchedule } from "../lib/media";
+import type { PostDraft } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
 
 export function PostsPage() {
@@ -15,7 +17,7 @@ export function PostsPage() {
     driveUploadRequested: false
   });
 
-  const { data: posts } = useQuery({
+  const { data: posts = [] } = useQuery<PostDraft[]>({
     queryKey: ["posts", activeBusinessId],
     queryFn: async () =>
       (await api.get("/posts", { params: { businessId: activeBusinessId } })).data.data,
@@ -88,46 +90,93 @@ export function PostsPage() {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-      <Panel title="Post pipeline" description="Drafts, smart timing, scheduling, and publishing actions.">
-        <div className="space-y-3">
-          {posts?.map((post: any) => (
-            <div
-              key={post._id}
-              className="rounded-2xl border border-slate-200 px-4 py-4 text-sm text-slate-700"
-            >
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="font-semibold text-slate-900">{post.title}</p>
-                  <p className="mt-1">{post.caption || "No caption yet"}</p>
-                  <p className="mt-2 text-xs uppercase tracking-[0.2em] text-slate-500">
-                    {post.status}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => suggestHashtags(post._id)}
-                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-medium"
-                  >
-                    Hashtags
-                  </button>
-                  <button
-                    onClick={() => schedulePost(post._id)}
-                    className="rounded-full border border-slate-200 px-3 py-2 text-xs font-medium"
-                  >
-                    Smart schedule
-                  </button>
-                  <button
-                    onClick={() => publishPost(post._id)}
-                    className="rounded-full bg-brand-600 px-3 py-2 text-xs font-medium text-white"
-                  >
-                    Publish now
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+    <div className="space-y-6">
+      <Panel
+        title="Post management"
+        description="Use this table to manage draft captions, scheduling, hashtags, and publish actions in one place."
+      >
+        <div className="overflow-x-auto">
+          <table className="min-w-[1180px] border-separate border-spacing-y-3">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-[0.18em] text-slate-500">
+                <th className="px-3">Title</th>
+                <th className="px-3">Instagram</th>
+                <th className="px-3">Media</th>
+                <th className="px-3">Status</th>
+                <th className="px-3">Scheduled</th>
+                <th className="px-3">Suggested</th>
+                <th className="px-3">Hashtags</th>
+                <th className="px-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {posts.map((post) => (
+                <tr
+                  key={post._id}
+                  className="rounded-2xl bg-[#fbfbf8] shadow-[0_8px_18px_rgba(15,23,42,0.04)]"
+                >
+                  <td className="rounded-l-2xl px-3 py-4">
+                    <div>
+                      <p className="font-medium text-slate-900">{post.title}</p>
+                      <p className="mt-1 max-w-[260px] text-sm text-slate-600">
+                        {post.caption || "No caption yet"}
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-3 py-4 text-sm text-slate-700">
+                    {post.instagramAccountId
+                      ? `${post.instagramAccountId.name} (${post.instagramAccountId.handle})`
+                      : "No account"}
+                  </td>
+                  <td className="px-3 py-4 text-sm text-slate-700">
+                    {post.mediaAssetIds?.length || 0} item{post.mediaAssetIds?.length === 1 ? "" : "s"}
+                  </td>
+                  <td className="px-3 py-4">
+                    <span className="rounded-full bg-[#eef2e5] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700">
+                      {post.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-4 text-sm text-slate-700">
+                    {formatSchedule(post.scheduledFor)}
+                  </td>
+                  <td className="px-3 py-4 text-sm text-slate-700">
+                    {formatSchedule(post.smartTimingSuggestedFor)}
+                  </td>
+                  <td className="px-3 py-4 text-sm text-slate-700">
+                    {post.hashtags?.length ? post.hashtags.join(", ") : "Not generated"}
+                  </td>
+                  <td className="rounded-r-2xl px-3 py-4">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => suggestHashtags(post._id)}
+                        className="rounded-full border border-slate-200 px-3 py-2 text-xs font-medium"
+                      >
+                        Hashtags
+                      </button>
+                      <button
+                        onClick={() => schedulePost(post._id)}
+                        className="rounded-full border border-slate-200 px-3 py-2 text-xs font-medium"
+                      >
+                        Smart schedule
+                      </button>
+                      <button
+                        onClick={() => publishPost(post._id)}
+                        className="rounded-full bg-brand-600 px-3 py-2 text-xs font-medium text-white"
+                      >
+                        Publish now
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+        {!posts.length ? (
+          <div className="mt-6 rounded-3xl border border-dashed border-[#d7ddd4] bg-[#f7f8f4] p-8 text-center text-sm text-slate-600">
+            No post drafts yet. Create one below after selecting an Instagram account and media.
+          </div>
+        ) : null}
       </Panel>
 
       <Panel title="Create draft">

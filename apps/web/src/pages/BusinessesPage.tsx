@@ -21,8 +21,7 @@ export function BusinessesPage() {
     businessId: activeBusinessId || "",
     name: "",
     email: "",
-    password: "",
-    role: "admin"
+    password: ""
   });
 
   const { data: businesses } = useQuery({
@@ -58,14 +57,13 @@ export function BusinessesPage() {
     try {
       await api.post("/businesses/members", memberForm);
       setMemberSuccess(
-        `${memberForm.role} login is ready. They can use the same /login page with ${memberForm.email}.`
+        `Admin login is ready. They can use the same /login page with ${memberForm.email}.`
       );
       setMemberForm({
         businessId: activeBusinessId || "",
         name: "",
         email: "",
-        password: "",
-        role: "admin"
+        password: ""
       });
       queryClient.invalidateQueries({ queryKey: ["businesses"] });
     } catch (error) {
@@ -76,21 +74,17 @@ export function BusinessesPage() {
   return (
     <div className="space-y-6">
       <Panel
-        title="Role-wise auth flow"
-        description="Every role uses the same login page. The difference comes from who created the account and what business membership that account has."
+        title="Admin auth flow"
+        description="The app now uses one admin role. Every admin uses the same login page and gets access through business membership."
       >
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-2">
           <FlowCard
-            title="Super Admin"
-            body="Created only from /setup. Uses /login afterward. Can create businesses and manage platform structure."
+            title="First Admin"
+            body="Created from /setup. Uses /login afterward and can create the first business."
           />
           <FlowCard
-            title="Business Admin"
-            body="Created from this page with role = admin and a password. Uses the same /login page, then gets admin access inside the selected business."
-          />
-          <FlowCard
-            title="Normal User"
-            body="Created from this page with role = user and a password. Uses the same /login page, but gets limited access based on the business membership."
+            title="Additional Admin"
+            body="Created from this page with a password. Uses the same /login page and gets full access inside the current workspace."
           />
         </div>
         <div className="mt-5 rounded-3xl bg-[#f6f7f2] px-5 py-4 text-sm text-slate-700">
@@ -102,7 +96,7 @@ export function BusinessesPage() {
       <div className="grid gap-6 xl:grid-cols-2">
         <Panel
           title="Businesses"
-          description="Only the super admin should create new businesses. Admin and user logins are created under a business."
+          description="Admins can create businesses and manage admin access under each business."
         >
           <div className="space-y-3">
             {businesses?.map((business: any) => (
@@ -149,22 +143,17 @@ export function BusinessesPage() {
           </Panel>
 
           <Panel
-            title="Create admin or user login"
-            description="This form now includes the missing password field. The created member will use the same /login page as everyone else."
+            title="Create admin login"
+            description="Create another admin for the current workspace. They will use the same /login page as everyone else."
           >
             <form className="grid gap-3" onSubmit={addMember}>
-              <select
-                className="rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                value={memberForm.businessId}
-                onChange={(event) => setMemberForm({ ...memberForm, businessId: event.target.value })}
-              >
-                <option value="">Select business</option>
-                {businesses?.map((business: any) => (
-                  <option key={business._id} value={business._id}>
-                    {business.name}
-                  </option>
-                ))}
-              </select>
+              <div className="rounded-2xl border border-[#d7ddd4] bg-[#f6f7f2] px-4 py-3 text-sm text-slate-700">
+                Workspace:
+                <span className="ml-2 font-medium text-slate-950">
+                  {businesses?.find((business: any) => business._id === activeBusinessId)?.name ||
+                    "No workspace selected yet"}
+                </span>
+              </div>
               <input
                 className="rounded-2xl border border-[#d7ddd4] px-4 py-3"
                 placeholder="Full name"
@@ -185,28 +174,19 @@ export function BusinessesPage() {
                 value={memberForm.password}
                 onChange={(event) => setMemberForm({ ...memberForm, password: event.target.value })}
               />
-              <select
-                className="rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                value={memberForm.role}
-                onChange={(event) => setMemberForm({ ...memberForm, role: event.target.value })}
-              >
-                <option value="admin">Admin</option>
-                <option value="user">User</option>
-              </select>
-
               <div className="rounded-2xl bg-[#f6f7f2] px-4 py-3 text-sm text-slate-700">
                 Login flow:
                 <div className="mt-2">1. Create the member here</div>
                 <div>2. Share email + password with that member</div>
                 <div>3. They sign in from the same `/login` page</div>
-                <div>4. Role + business membership controls what they can access</div>
+                <div>4. Their login opens their workspace automatically</div>
               </div>
 
               {memberError ? <p className="text-sm text-red-600">{memberError}</p> : null}
               {memberSuccess ? <p className="text-sm text-emerald-700">{memberSuccess}</p> : null}
 
               <button className="rounded-2xl bg-slate-950 px-4 py-3 text-white">
-                Create member login
+                Create admin login
               </button>
             </form>
           </Panel>
@@ -215,20 +195,12 @@ export function BusinessesPage() {
 
       <Panel
         title="What happens after login"
-        description="The login page is shared. The platform decides the experience after login using the role and business membership."
+        description="The login page is shared. Access is now based on admin membership for the current workspace."
       >
-        <div className="grid gap-4 md:grid-cols-3">
-          <AuthResultCard
-            role="super_admin"
-            body="Sees platform-level business management. Can create businesses and oversee the whole workspace."
-          />
+        <div className="grid gap-4 md:grid-cols-1">
           <AuthResultCard
             role="admin"
-            body="Sees business operations such as Drive Browser, queue planning, integrations, and member management for that business."
-          />
-          <AuthResultCard
-            role="user"
-            body="Uses the same login page, but should stay limited to allowed business-scoped operations."
+            body="Sees workspace operations such as Drive Browser, queue planning, integrations, analytics, and member management for their login."
           />
         </div>
         <div className="mt-5 text-sm text-slate-600">

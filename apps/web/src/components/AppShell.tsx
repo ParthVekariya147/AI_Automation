@@ -5,14 +5,14 @@ const navItems = [
   { to: "/", label: "Overview" },
   { to: "/drive-browser", label: "Drive Browser" },
   { to: "/queue", label: "Content Queue" },
+  { to: "/posts", label: "Posts" },
   { to: "/businesses", label: "Businesses" },
   { to: "/integrations", label: "Integrations" },
   { to: "/analytics", label: "Analytics" }
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, memberships, activeBusinessId, clearSession, setActiveBusinessId } =
-    useAuthStore();
+  const { user, memberships, activeBusinessId, clearSession } = useAuthStore();
 
   const activeMembership = memberships.find(
     (membership) => membership.businessId._id === activeBusinessId
@@ -56,7 +56,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </p>
             <p className="mt-4 text-xs text-slate-300">
               {activeMembership
-                ? `${activeMembership.businessId.name} selected`
+                ? `${activeMembership.businessId.name} workspace`
                 : "Create a business to activate the workflow"}
             </p>
             <button
@@ -79,19 +79,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   Instagram Automation Suite
                 </h1>
               </div>
-
-              <select
-                value={activeBusinessId || ""}
-                onChange={(event) => setActiveBusinessId(event.target.value)}
-                className="w-full rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800 outline-none ring-emerald-200 focus:ring-2"
-              >
-                {!memberships.length ? <option value="">No business selected</option> : null}
-                {memberships.map((membership) => (
-                  <option key={membership._id} value={membership.businessId._id}>
-                    {membership.businessId.name}
-                  </option>
-                ))}
-              </select>
+              <div className="w-full rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800">
+                {activeMembership?.businessId.name || "No business assigned yet"}
+              </div>
 
               <nav className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
                 {navItems.map((item) => (
@@ -126,22 +116,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="rounded-2xl bg-[#f3f4ef] px-4 py-3 text-sm text-slate-600">
-                  {memberships.length
-                    ? `${memberships.length} business membership${memberships.length > 1 ? "s" : ""}`
-                    : "No business memberships yet"}
+                  {activeMembership
+                    ? `Workspace: ${activeMembership.businessId.name}`
+                    : "No business assigned yet"}
                 </div>
-                <select
-                  value={activeBusinessId || ""}
-                  onChange={(event) => setActiveBusinessId(event.target.value)}
-                  className="min-w-[240px] rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800 outline-none ring-emerald-200 focus:ring-2 max-lg:hidden"
-                >
-                  {!memberships.length ? <option value="">No business selected</option> : null}
-                  {memberships.map((membership) => (
-                    <option key={membership._id} value={membership.businessId._id}>
-                      {membership.businessId.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="min-w-[240px] rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800 max-lg:hidden">
+                  {activeMembership?.businessId.name || "No business assigned yet"}
+                </div>
               </div>
             </div>
           </header>

@@ -6,5 +6,5 @@ export const businessRouter = Router();
 
 businessRouter.use(requireAuth);
 businessRouter.get("/", listBusinesses);
-businessRouter.post("/", requireGlobalRole("super_admin"), createBusiness);
-businessRouter.post("/members", requireBusinessRole("admin", "super_admin"), addMember);
+businessRouter.post("/", requireGlobalRole("admin"), createBusiness);
+businessRouter.post("/members", requireBusinessRole("admin"), addMember);

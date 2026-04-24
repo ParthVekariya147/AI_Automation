@@ -149,3 +149,32 @@ export async function fetchGoogleProfile(authCode: string) {
     email: profile.data.email ?? ""
   };
 }
+
+export async function fetchDriveFilePreview(connectionId: string, fileId: string) {
+  const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+  const accessToken = oauth2Client.credentials.access_token;
+
+  if (!accessToken) {
+    throw new ApiError(400, "Google Drive access token is unavailable");
+  }
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    throw new ApiError(response.status, "Google Drive preview could not be loaded");
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  return {
+    contentType: response.headers.get("content-type") || "application/octet-stream",
+    buffer: Buffer.from(arrayBuffer)
+  };
+}

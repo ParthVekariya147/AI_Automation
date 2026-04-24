@@ -16,6 +16,12 @@ export const app = express();
 app.use(
   cors({
     origin(origin, callback) {
+      const isLocalDevOrigin =
+        env.NODE_ENV !== "production" &&
+        Boolean(
+          origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+        );
+
       const isLanDevOrigin =
         env.NODE_ENV !== "production" &&
         Boolean(
@@ -25,7 +31,7 @@ app.use(
             )
         );
 
-      if (!origin || env.corsOrigins.includes(origin) || isLanDevOrigin) {
+      if (!origin || env.corsOrigins.includes(origin) || isLocalDevOrigin || isLanDevOrigin) {
         return callback(null, true);
       }
 

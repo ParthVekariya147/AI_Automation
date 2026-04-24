@@ -5,6 +5,7 @@ import { UserModel } from "../models/User.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { ApiError } from "../utils/api-error.js";
 import { comparePassword, hashPassword, signToken } from "../utils/auth.js";
+import type { Role } from "../types.js";
 
 const bootstrapSchema = z.object({
   name: z.string().min(2),
@@ -16,6 +17,34 @@ const loginSchema = bootstrapSchema.pick({
   email: true,
   password: true
 });
+
+function normalizeMemberships<T extends { role?: unknown }>(memberships: T[]) {
+  return memberships.map((membership) => ({
+    ...membership,
+    role: "admin" as const
+  }));
+}
+
+function buildSessionUser(user: {
+  id?: string;
+  _id?: { toString(): string };
+  name: string;
+  email: string;
+}) {
+  const globalRole: Role = "admin";
+  const id = user.id ?? user._id?.toString();
+
+  if (!id) {
+    throw new ApiError(500, "User session could not be created");
+  }
+
+  return {
+    id,
+    name: user.name,
+    email: user.email,
+    globalRole
+  };
+}
 
 export const bootstrap = asyncHandler(async (req: Request, res: Response) => {
   const existingUserCount = await UserModel.countDocuments();
@@ -31,25 +60,17 @@ export const bootstrap = asyncHandler(async (req: Request, res: Response) => {
     name: payload.name,
     email: payload.email,
     passwordHash,
-    globalRole: "super_admin"
+    globalRole: "admin"
   });
 
-  const token = signToken({
-    id: user.id,
-    email: user.email,
-    globalRole: user.globalRole
-  });
+  const sessionUser = buildSessionUser(user);
+  const token = signToken(sessionUser);
 
   res.status(201).json({
     success: true,
     data: {
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        globalRole: user.globalRole
-      }
+      user: sessionUser
     }
   });
 });
@@ -69,23 +90,15 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     .populate("businessId", "name slug timezone")
     .lean();
 
-  const token = signToken({
-    id: user.id,
-    email: user.email,
-    globalRole: user.globalRole
-  });
+  const sessionUser = buildSessionUser(user);
+  const token = signToken(sessionUser);
 
   res.json({
     success: true,
     data: {
       token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        globalRole: user.globalRole
-      },
-      memberships
+      user: sessionUser,
+      memberships: normalizeMemberships(memberships)
     }
   });
 });
@@ -111,8 +124,8 @@ export const me = asyncHandler(async (req: Request & { user?: { id: string } }, 
   res.json({
     success: true,
     data: {
-      user,
-      memberships
+      user: buildSessionUser(user),
+      memberships: normalizeMemberships(memberships)
     }
   });
 });

@@ -14,7 +14,7 @@ const membershipSchema = new Schema<MembershipEntity>(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     role: {
       type: String,
-      enum: ["super_admin", "admin", "user"],
+      enum: ["admin"],
       required: true
     },
     status: {

@@ -1,4 +1,4 @@
-export type Role = "super_admin" | "admin" | "user";
+export type Role = "admin";
 
 export interface Business {
   _id: string;
@@ -58,4 +58,26 @@ export interface DriveFile {
   thumbnailLink?: string | null;
   webViewLink?: string | null;
   createdTime?: string | null;
+}
+
+export interface PostDraft {
+  _id: string;
+  title: string;
+  caption: string;
+  hashtags?: string[];
+  status: string;
+  scheduledFor?: string;
+  smartTimingSuggestedFor?: string;
+  createdAt: string;
+  instagramAccountId?: {
+    _id: string;
+    name: string;
+    handle: string;
+  };
+  mediaAssetIds?: Array<{
+    _id: string;
+    originalName: string;
+    mediaType: "image" | "video";
+    source: "local" | "google_drive" | "instagram_direct";
+  }>;
 }

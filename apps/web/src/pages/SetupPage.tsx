@@ -32,7 +32,7 @@ export function SetupPage() {
     <div className="flex min-h-screen items-center justify-center bg-glow px-4">
       <div className="w-full max-w-lg rounded-[2rem] border border-white/60 bg-white/85 p-8 shadow-panel backdrop-blur">
         <p className="text-xs uppercase tracking-[0.3em] text-brand-600">Initial Setup</p>
-        <h1 className="mt-2 text-3xl font-semibold text-slate-900">Create the first super admin</h1>
+        <h1 className="mt-2 text-3xl font-semibold text-slate-900">Create the first admin</h1>
         <form className="mt-8 grid gap-4" onSubmit={handleSubmit}>
           <input
             value={form.name}
@@ -56,7 +56,7 @@ export function SetupPage() {
           />
           {error ? <p className="text-sm text-red-600">{error}</p> : null}
           <button className="rounded-2xl bg-brand-600 px-4 py-3 font-medium text-white transition hover:bg-brand-700">
-            Bootstrap platform
+            Create admin account
           </button>
         </form>
       </div>

@@ -6,6 +6,7 @@ import { InstagramAccountModel } from "../models/InstagramAccount.js";
 import { createAuditLog } from "../services/audit.service.js";
 import {
   createGoogleOAuthClient,
+  fetchDriveFilePreview,
   fetchGoogleProfile,
   listDriveFiles,
   listDriveFolders,
@@ -20,13 +21,16 @@ function resolveSafeFrontendOrigin(origin?: string) {
   if (!origin) return env.CLIENT_URL;
 
   const isConfigured = env.corsOrigins.includes(origin);
+  const isLocalDevOrigin =
+    env.NODE_ENV !== "production" &&
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   const isLanDevOrigin =
     env.NODE_ENV !== "production" &&
     /^https?:\/\/(192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
       origin
     );
 
-  return isConfigured || isLanDevOrigin ? origin : env.CLIENT_URL;
+  return isConfigured || isLocalDevOrigin || isLanDevOrigin ? origin : env.CLIENT_URL;
 }
 
 function buildDriveBrowserRedirect(
@@ -114,6 +118,43 @@ export const listDriveConnections = asyncHandler(async (req: AuthedRequest, res:
   });
 });
 
+export const disconnectDrive = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const businessId = req.body.businessId || req.query.businessId?.toString();
+
+  if (!businessId) {
+    throw new ApiError(400, "businessId is required");
+  }
+
+  await GoogleDriveConnectionModel.updateMany(
+    { businessId },
+    {
+      isActive: false,
+      accessToken: undefined,
+      refreshToken: undefined,
+      tokenExpiryDate: undefined
+    }
+  );
+
+  await createAuditLog({
+    actorUserId: req.user.id,
+    businessId,
+    action: "drive.disconnected",
+    entityType: "GoogleDriveConnection"
+  });
+
+  res.json({
+    success: true,
+    data: {
+      businessId,
+      status: "disconnected"
+    }
+  });
+});
+
 export const connectDrive = asyncHandler(async (req: AuthedRequest, res: Response) => {
   if (!req.user) {
     throw new ApiError(401, "Authentication required");
@@ -164,15 +205,18 @@ export const startDriveOAuth = asyncHandler(async (req: AuthedRequest, res: Resp
     userId: req.user.id,
     frontendOrigin
   });
+  const scopes = Array.from(
+    new Set([
+      ...env.googleDriveScopes,
+      "https://www.googleapis.com/auth/userinfo.email"
+    ])
+  );
 
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
     include_granted_scopes: true,
-    scope: [
-      "https://www.googleapis.com/auth/drive.file",
-      "https://www.googleapis.com/auth/drive.metadata.readonly"
-    ],
+    scope: scopes,
     state
   });
 
@@ -279,7 +323,8 @@ export const driveOAuthCallback = asyncHandler(async (req: AuthedRequest, res: R
         connected: "1"
       })
     );
-  } catch {
+  } catch (error) {
+    console.error("Google Drive OAuth callback failed", error);
     return res.redirect(
       buildDriveBrowserRedirect(parsedState.frontendOrigin, {
         connected: "0",
@@ -337,4 +382,35 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
 
   const files = await listDriveFiles(connection.id, folderId);
   res.json({ success: true, data: files });
+});
+
+export const previewDriveFile = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const businessId = req.query.businessId?.toString();
+  const fileId = req.query.fileId?.toString();
+
+  if (!businessId) {
+    throw new ApiError(400, "businessId is required");
+  }
+
+  if (!fileId) {
+    throw new ApiError(400, "fileId is required");
+  }
+
+  const connection = await GoogleDriveConnectionModel.findOne({
+    businessId,
+    isActive: true,
+    refreshToken: { $exists: true, $ne: null }
+  }).sort({ updatedAt: -1 });
+
+  if (!connection) {
+    throw new ApiError(
+      400,
+      "Google Drive is not fully connected for this business. Reconnect from Drive Browser using OAuth."
+    );
+  }
+
+  const preview = await fetchDriveFilePreview(connection.id, fileId);
+  res.setHeader("Content-Type", preview.contentType);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(preview.buffer);
 });

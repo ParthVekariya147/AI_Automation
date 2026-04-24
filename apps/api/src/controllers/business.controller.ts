@@ -19,21 +19,12 @@ const addMemberSchema = z.object({
   businessId: z.string().min(1),
   name: z.string().min(2),
   email: z.email(),
-  password: z
-    .string()
-    .min(6, "Password must be at least 6 characters long")
-    .optional(),
-  role: z.enum(["admin", "user"])
+  password: z.string().min(6, "Password must be at least 6 characters long")
 });
 
 export const listBusinesses = asyncHandler(async (req: AuthedRequest, res: Response) => {
   if (!req.user) {
     throw new ApiError(401, "Authentication required");
-  }
-
-  if (req.user.globalRole === "super_admin") {
-    const businesses = await BusinessModel.find().sort({ createdAt: -1 }).lean();
-    return res.json({ success: true, data: businesses });
   }
 
   const memberships = await MembershipModel.find({
@@ -61,7 +52,7 @@ export const createBusiness = asyncHandler(async (req: AuthedRequest, res: Respo
   await MembershipModel.create({
     businessId: business._id,
     userId: req.user.id,
-    role: req.user.globalRole === "super_admin" ? "super_admin" : "admin",
+    role: "admin",
     status: "active"
   });
 
@@ -92,25 +83,20 @@ export const addMember = asyncHandler(async (req: AuthedRequest, res: Response) 
 
   if (!user) {
     if (!payload.password) {
-      throw new ApiError(
-        400,
-        "Password is required when creating a new admin or user login"
-      );
+      throw new ApiError(400, "Password is required when creating a new admin login");
     }
 
     user = await UserModel.create({
       name: payload.name,
       email: payload.email,
       passwordHash: await hashPassword(payload.password),
-      globalRole: payload.role
+      globalRole: "admin"
     });
   } else {
     user.name = payload.name;
-    user.globalRole = payload.role;
+    user.globalRole = "admin";
 
-    if (payload.password) {
-      user.passwordHash = await hashPassword(payload.password);
-    }
+    user.passwordHash = await hashPassword(payload.password);
 
     await user.save();
   }
@@ -123,7 +109,7 @@ export const addMember = asyncHandler(async (req: AuthedRequest, res: Response) 
     {
       businessId: payload.businessId,
       userId: user._id,
-      role: payload.role,
+      role: "admin",
       status: "active"
     },
     { upsert: true, new: true }
@@ -135,7 +121,7 @@ export const addMember = asyncHandler(async (req: AuthedRequest, res: Response) 
     action: "membership.upserted",
     entityType: "Membership",
     entityId: membership.id,
-    metadata: { role: payload.role, email: payload.email }
+    metadata: { role: "admin", email: payload.email }
   });
 
   res.status(201).json({ success: true, data: membership });

@@ -8,6 +8,7 @@ import { DashboardPage } from "../pages/DashboardPage";
 import { DriveBrowserPage } from "../pages/DriveBrowserPage";
 import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { LoginPage } from "../pages/LoginPage";
+import { PostsPage } from "../pages/PostsPage";
 import { QueueDetailPage } from "../pages/QueueDetailPage";
 import { QueuePage } from "../pages/QueuePage";
 import { SetupPage } from "../pages/SetupPage";
@@ -46,6 +47,7 @@ export default function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/drive-browser" element={<DriveBrowserPage />} />
                 <Route path="/queue" element={<QueuePage />} />
+                <Route path="/posts" element={<PostsPage />} />
                 <Route path="/queue/:id" element={<QueueDetailPage />} />
                 <Route path="/businesses" element={<BusinessesPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
