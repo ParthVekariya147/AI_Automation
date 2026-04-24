@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
@@ -16,6 +16,8 @@ type DriveConnection = {
   isActive: boolean;
   isOAuthReady: boolean;
 };
+
+type MediaViewMode = "large" | "medium" | "small" | "detailed";
 
 export function DriveBrowserPage() {
   const queryClient = useQueryClient();
@@ -36,7 +38,10 @@ export function DriveBrowserPage() {
   const [fileSearch, setFileSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "video">("all");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
-  const [importingFileId, setImportingFileId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<MediaViewMode>("large");
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const [importingFileIds, setImportingFileIds] = useState<Set<string>>(new Set());
   const [autoFetchAttempted, setAutoFetchAttempted] = useState(false);
 
   const { data: importedAssets = [] } = useQuery<MediaAsset[]>({
@@ -45,6 +50,10 @@ export function DriveBrowserPage() {
       (await api.get("/media", { params: { businessId: activeBusinessId } })).data.data,
     enabled: Boolean(activeBusinessId)
   });
+  const importedDriveFileIds = useMemo(
+    () => new Set(importedAssets.map((asset) => asset.driveFileId).filter(Boolean)),
+    [importedAssets]
+  );
 
   const { data: connections = [], isLoading: connectionsLoading } = useQuery<DriveConnection[]>({
     queryKey: ["drive-connections", activeBusinessId],
@@ -137,6 +146,9 @@ export function DriveBrowserPage() {
     setFileSearch("");
     setMediaFilter("all");
     setSortOrder("newest");
+    setViewMode("large");
+    setSelectedFileIds([]);
+    setLastSelectedIndex(null);
     setAutoFetchAttempted(false);
   }, [activeBusinessId]);
 
@@ -150,6 +162,8 @@ export function DriveBrowserPage() {
     setLastFetchedFolderName("Root");
     setFolderSearch("");
     setFileSearch("");
+    setSelectedFileIds([]);
+    setLastSelectedIndex(null);
     setAutoFetchAttempted(false);
   }, [connectionState]);
 
@@ -208,6 +222,8 @@ export function DriveBrowserPage() {
       setHasFetchedData(true);
       setLastFetchedFolderId(selectedFolderId);
       setLastFetchedFolderName(selectedFolderName);
+      setSelectedFileIds([]);
+      setLastSelectedIndex(null);
     } catch (error) {
       setFetchError(
         extractApiError(error, "Drive data could not be fetched for this folder.")
@@ -241,7 +257,11 @@ export function DriveBrowserPage() {
     if (!activeBusinessId) return;
 
     try {
-      setImportingFileId(file.id);
+      setImportingFileIds((prev) => {
+        const next = new Set(prev);
+        next.add(file.id);
+        return next;
+      });
       const response = await api.post("/media/import-from-drive", {
         businessId: activeBusinessId,
         driveFileId: file.id,
@@ -280,8 +300,111 @@ export function DriveBrowserPage() {
           : message
       });
     } finally {
-      setImportingFileId(null);
+      setImportingFileIds((prev) => {
+        const next = new Set(prev);
+        next.delete(file.id);
+        return next;
+      });
     }
+  }
+
+  async function importSelectedFiles() {
+    if (!activeBusinessId || !selectedFileIds.length) return;
+    const filesToImport = mediaFiles.filter((f) => selectedFileIds.includes(f.id));
+    if (!filesToImport.length) return;
+
+    setImportingFileIds((prev) => {
+      const next = new Set(prev);
+      filesToImport.forEach((f) => next.add(f.id));
+      return next;
+    });
+
+    let newCount = 0;
+    let alreadyCount = 0;
+    let failCount = 0;
+
+    await Promise.allSettled(
+      filesToImport.map(async (file) => {
+        try {
+          const response = await api.post("/media/import-from-drive", {
+            businessId: activeBusinessId,
+            driveFileId: file.id,
+            driveFolderId: selectedFolderId,
+            folderName: selectedFolderName,
+            originalName: file.name,
+            mimeType: file.mimeType,
+            sizeInBytes: Number(file.size || 0),
+            previewUrl: file.previewUrl || undefined,
+            driveThumbnailLink: file.thumbnailLink || undefined,
+            driveViewLink: file.webViewLink || undefined
+          });
+
+          if (response.data?.meta?.alreadyImported) {
+            alreadyCount++;
+          } else {
+            newCount++;
+          }
+        } catch (error) {
+          const message = extractApiError(error, "File could not be imported.");
+          if (/already exists|already imported|duplicate/i.test(message)) {
+            alreadyCount++;
+          } else {
+            failCount++;
+          }
+        } finally {
+          setImportingFileIds((prev) => {
+            const next = new Set(prev);
+            next.delete(file.id);
+            return next;
+          });
+        }
+      })
+    );
+
+    toast({
+      tone: failCount > 0 ? "error" : "success",
+      title: "Bulk import finished",
+      description: `Successfully imported ${newCount} files. ${alreadyCount > 0 ? `${alreadyCount} were already in queue. ` : ""}${failCount > 0 ? `Failed to import ${failCount} files.` : ""}`
+    });
+
+    queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+    queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+    queryClient.invalidateQueries({ queryKey: ["media", activeBusinessId] });
+    setSelectedFileIds([]);
+  }
+
+  useEffect(() => {
+    const visibleIds = new Set(mediaFiles.map((file) => file.id));
+    setSelectedFileIds((current) => current.filter((id) => visibleIds.has(id)));
+    setLastSelectedIndex(null);
+  }, [mediaFiles]);
+
+  function toggleFileSelection(file: DriveFile, index: number, event: MouseEvent) {
+    const isRangeSelect = event.shiftKey && lastSelectedIndex !== null;
+    const isMultiSelect = event.metaKey || event.ctrlKey;
+
+    setSelectedFileIds((current) => {
+      if (isRangeSelect) {
+        const start = Math.min(lastSelectedIndex, index);
+        const end = Math.max(lastSelectedIndex, index);
+        const rangeIds = mediaFiles.slice(start, end + 1).map((item) => item.id);
+        if (isMultiSelect) {
+          return Array.from(new Set([...current, ...rangeIds]));
+        }
+        return rangeIds;
+      }
+
+      if (isMultiSelect) {
+        if (current.includes(file.id)) {
+          return current.filter((id) => id !== file.id);
+        }
+        return [...current, file.id];
+      }
+
+      return [file.id];
+    });
+
+    setLastSelectedIndex(index);
   }
 
   return (
@@ -439,7 +562,7 @@ export function DriveBrowserPage() {
             <SimpleEmptyState text="No image or video files were found in this folder." />
           ) : (
             <div className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
+              <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto]">
                 <input
                   value={fileSearch}
                   onChange={(event) => setFileSearch(event.target.value)}
@@ -467,64 +590,197 @@ export function DriveBrowserPage() {
                   <option value="newest">Newest first</option>
                   <option value="oldest">Oldest first</option>
                 </select>
+                <select
+                  value={viewMode}
+                  onChange={(event) => setViewMode(event.target.value as MediaViewMode)}
+                  className="rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800"
+                >
+                  <option value="large">Large view</option>
+                  <option value="medium">Medium view</option>
+                  <option value="small">Small view</option>
+                  <option value="detailed">Detailed view</option>
+                </select>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {mediaFiles.map((file) => (
-                  <article
-                    key={file.id}
-                    className="overflow-hidden rounded-[24px] border border-[#d7ddd4] bg-[#fcfcfa]"
-                  >
-                    <div className="aspect-[4/3] bg-[#eef1ea]">
-                      {file.mimeType.startsWith("image/") && file.previewUrl ? (
-                        <img
-                          src={resolveApiAssetUrl(file.previewUrl)}
-                          alt={file.name}
-                          className="h-full w-full object-contain"
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-sm font-medium text-slate-500">
-                          {file.mimeType.startsWith("video/") ? "Video preview" : "No preview available"}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-[#f6f7f2] px-4 py-3 text-sm text-slate-600">
+                <p>
+                  {selectedFileIds.length} selected · Tip: use Shift+Click to select a range, Ctrl/Cmd+Click for multi-select.
+                </p>
+                <div className="flex items-center gap-3">
+                  {selectedFileIds.length ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          setSelectedFileIds([]);
+                          setLastSelectedIndex(null);
+                        }}
+                        className="rounded-full border border-[#d7ddd4] bg-white px-3 py-1.5 text-xs font-medium text-slate-700"
+                      >
+                        Clear selection
+                      </button>
+                      <button
+                        onClick={importSelectedFiles}
+                        disabled={importingFileIds.size > 0}
+                        className="shrink-0 rounded-full bg-[#10332b] px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {importingFileIds.size > 0 ? "Importing..." : `Import ${selectedFileIds.length} files`}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              {viewMode === "detailed" ? (
+                <div className="space-y-2">
+                  {mediaFiles.map((file, index) => {
+                    const selected = selectedFileIds.includes(file.id);
+                    const imported = importedDriveFileIds.has(file.id);
+                    return (
+                      <article
+                        key={file.id}
+                        onClick={(event) => toggleFileSelection(file, index, event)}
+                        className={`grid cursor-pointer gap-3 rounded-2xl border bg-[#fcfcfa] p-3 transition md:grid-cols-[64px_1fr_auto] ${selected
+                            ? "border-emerald-400 ring-2 ring-emerald-200"
+                            : "border-[#d7ddd4] hover:border-emerald-300"
+                          }`}
+                      >
+                        <div className="h-16 w-16 overflow-hidden rounded-xl bg-[#eef1ea]">
+                          {file.mimeType.startsWith("image/") && file.previewUrl ? (
+                            <img
+                              src={resolveApiAssetUrl(file.previewUrl)}
+                              alt={file.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[10px] text-slate-500">
+                              {file.mimeType.startsWith("video/") ? "Video" : "No preview"}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-3 p-4">
-                      <div>
-                        <p className="line-clamp-2 font-medium text-slate-900">{file.name}</p>
-                        <p className="mt-1 text-xs uppercase tracking-[0.2em] text-slate-500">
-                          {file.mimeType.startsWith("video/") ? "Video" : "Image"}
-                        </p>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {file.createdTime
-                            ? new Date(file.createdTime).toLocaleString()
-                            : "Created time unavailable"}
-                        </p>
-                      </div>
-
-                      <div className="flex gap-2">
-                        {file.webViewLink ? (
-                          <a
-                            href={file.webViewLink}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="flex-1 rounded-full border border-[#d7ddd4] px-3 py-2 text-center text-xs font-medium text-slate-700"
-                          >
-                            Open
-                          </a>
-                        ) : null}
-                        <button
-                          onClick={() => importFile(file)}
-                          disabled={importingFileId === file.id}
-                          className="flex-1 rounded-full bg-[#10332b] px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-slate-900" title={file.name}>{file.name}</p>
+                          <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
+                            {file.mimeType.startsWith("video/") ? "Video" : "Image"} ·{" "}
+                            {file.createdTime ? new Date(file.createdTime).toLocaleString() : "Created time unavailable"}
+                          </p>
+                          {imported ? (
+                            <p className="mt-1 text-xs font-medium text-emerald-700">Already imported</p>
+                          ) : null}
+                        </div>
+                        <div
+                          className="flex items-center gap-2"
+                          onClick={(event) => event.stopPropagation()}
                         >
-                          {importingFileId === file.id ? "Importing..." : "Import"}
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
+                          {file.webViewLink ? (
+                            <a
+                              href={file.webViewLink}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded-full border border-[#d7ddd4] px-3 py-2 text-center text-xs font-medium text-slate-700"
+                            >
+                              Open
+                            </a>
+                          ) : null}
+                          <button
+                            onClick={() => importFile(file)}
+                            disabled={importingFileIds.has(file.id)}
+                            className="rounded-full bg-[#10332b] px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {importingFileIds.has(file.id) ? "Importing..." : imported ? "Re-import" : "Import"}
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div
+                  className={`grid ${viewMode === "large"
+                      ? "gap-4 sm:grid-cols-2 xl:grid-cols-3"
+                      : viewMode === "medium"
+                        ? "gap-3 sm:grid-cols-3 xl:grid-cols-4"
+                        : "gap-2 sm:grid-cols-4 xl:grid-cols-6"
+                    }`}
+                >
+                  {mediaFiles.map((file, index) => {
+                    const selected = selectedFileIds.includes(file.id);
+                    const imported = importedDriveFileIds.has(file.id);
+                    return (
+                      <article
+                        key={file.id}
+                        onClick={(event) => toggleFileSelection(file, index, event)}
+                        className={`cursor-pointer overflow-hidden rounded-2xl border bg-[#fcfcfa] transition ${selected
+                            ? "border-emerald-400 ring-2 ring-emerald-200"
+                            : "border-[#d7ddd4] hover:border-emerald-300"
+                          }`}
+                      >
+                        <div
+                          className={`relative bg-[#eef1ea] ${viewMode === "large" ? "h-80" : viewMode === "medium" ? "h-52" : "h-32"
+                            }`}
+                        >
+                          {file.mimeType.startsWith("image/") && file.previewUrl ? (
+                            <img
+                              src={resolveApiAssetUrl(file.previewUrl)}
+                              alt={file.name}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-xs font-medium text-slate-500">
+                              {file.mimeType.startsWith("video/") ? "Video preview" : "No preview"}
+                            </div>
+                          )}
+                          {imported ? (
+                            <span className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-800">
+                              Imported
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <div className={`${viewMode === "small" ? "space-y-2 p-2.5" : "space-y-3 p-3.5"} min-w-0`}>
+                          <div className="min-w-0">
+                            <p className={`${viewMode === "small" ? "line-clamp-1 text-sm" : "line-clamp-2"} font-medium text-slate-900 break-words`} title={file.name}>
+                              {file.name}
+                            </p>
+                            <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                              {file.mimeType.startsWith("video/") ? "Video" : "Image"}
+                            </p>
+                            {viewMode !== "small" ? (
+                              <p className="mt-1 text-xs text-slate-500">
+                                {file.createdTime
+                                  ? new Date(file.createdTime).toLocaleString()
+                                  : "Created time unavailable"}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          <div
+                            className="flex gap-2"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            {file.webViewLink ? (
+                              <a
+                                href={file.webViewLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="flex-1 rounded-full border border-[#d7ddd4] px-3 py-2 text-center text-xs font-medium text-slate-700"
+                              >
+                                Open
+                              </a>
+                            ) : null}
+                            <button
+                              onClick={() => importFile(file)}
+                              disabled={importingFileIds.has(file.id)}
+                              className="flex-1 rounded-full bg-[#10332b] px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {importingFileIds.has(file.id) ? "Importing..." : imported ? "Re-import" : "Import"}
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </Panel>

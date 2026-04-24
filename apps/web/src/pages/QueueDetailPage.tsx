@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
@@ -15,6 +15,8 @@ export function QueueDetailPage() {
   const { id } = useParams();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [aiCaption, setAiCaption] = useState("");
 
   const { data, isLoading } = useQuery<{
     asset: MediaAsset;
@@ -25,6 +27,12 @@ export function QueueDetailPage() {
       (await api.get(`/media/${id}`, { params: { businessId: activeBusinessId } })).data.data,
     enabled: Boolean(id && activeBusinessId)
   });
+
+  useEffect(() => {
+    if (data?.asset) {
+      setAiCaption(data.asset.aiCaption || "");
+    }
+  }, [data?.asset?._id, data?.asset?.aiCaption]);
 
   async function updateAsset(payload: Record<string, unknown>) {
     if (!id || !activeBusinessId) return;
@@ -57,6 +65,35 @@ export function QueueDetailPage() {
   const previewUrl = getMediaPreviewUrl(asset);
   const openUrl = getMediaOpenUrl(asset);
 
+  async function generateCaptionWithGemini() {
+    if (!id || !activeBusinessId || generating) return;
+    setGenerating(true);
+
+    try {
+      const response = await api.post(`/media/${id}/generate-caption`, {
+        businessId: activeBusinessId
+      });
+      const generatedCaption = response.data?.data?.aiCaption || "";
+      setAiCaption(generatedCaption);
+      queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
+      queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+      queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+      toast({
+        tone: "success",
+        title: "Caption generated",
+        description: "Gemini created a new caption for this media."
+      });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Caption generation failed",
+        description: extractApiError(error, "Gemini could not generate the caption.")
+      });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -78,13 +115,13 @@ export function QueueDetailPage() {
         ) : null}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_420px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Panel
           title="Preview"
-          description="Use this screen when you want to inspect the file, check its metadata, and plan posting details without losing context."
+          description="Compact preview mode for faster review before editing scheduling and caption details."
         >
-          <div className="overflow-hidden rounded-[28px] border border-[#d7ddd4] bg-[#f5f6f1]">
-            <div className="aspect-[4/3]">
+          <div className="mx-auto w-full max-w-lg overflow-hidden rounded-3xl border border-[#d7ddd4] bg-[#f5f6f1] p-4">
+            <div className="aspect-square overflow-hidden rounded-2xl bg-[#edf1e8]">
               {asset.mediaType === "image" && previewUrl ? (
                 <img
                   src={previewUrl}
@@ -186,12 +223,23 @@ export function QueueDetailPage() {
             <Field
               label="AI Caption"
               input={
-                <textarea
-                  rows={6}
-                  defaultValue={asset.aiCaption || ""}
-                  onBlur={(event) => updateAsset({ aiCaption: event.target.value })}
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                />
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={generateCaptionWithGemini}
+                    disabled={generating}
+                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {generating ? "Generating..." : "Generate with Gemini"}
+                  </button>
+                  <textarea
+                    rows={6}
+                    value={aiCaption}
+                    onChange={(event) => setAiCaption(event.target.value)}
+                    onBlur={() => updateAsset({ aiCaption })}
+                    className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
+                  />
+                </div>
               }
             />
             <div className="grid gap-4 sm:grid-cols-2">
@@ -239,16 +287,16 @@ export function QueueDetailPage() {
       {data.relatedGroupAssets.length > 1 ? (
         <Panel
           title="Related files in this group"
-          description="These files share the same Group ID and can be treated as one carousel set."
+          description="Compact suggestions for files that share the same Group ID."
         >
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
             {data.relatedGroupAssets.map((related) => (
               <Link
                 key={related._id}
                 to={`/queue/${related._id}`}
-                className="overflow-hidden rounded-[24px] border border-[#d7ddd4] bg-[#fbfbf8]"
+                className="overflow-hidden rounded-2xl border border-[#d7ddd4] bg-[#fbfbf8] transition hover:border-emerald-300"
               >
-                <div className="aspect-[4/3] bg-[#eef1ea]">
+                <div className="h-28 bg-[#eef1ea]">
                   {getMediaPreviewUrl(related) ? (
                     related.mediaType === "video" ? (
                       <video
@@ -270,9 +318,11 @@ export function QueueDetailPage() {
                     </div>
                   )}
                 </div>
-                <div className="p-4">
-                  <p className="font-medium text-slate-900">{related.originalName}</p>
-                  <p className="mt-1 text-sm text-slate-500">{related.workflowStatus}</p>
+                <div className="space-y-1 p-3">
+                  <p className="truncate text-sm font-medium text-slate-900">{related.originalName}</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                    {related.workflowStatus}
+                  </p>
                 </div>
               </Link>
             ))}

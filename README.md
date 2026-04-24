@@ -78,6 +78,7 @@ After the first account exists, the bootstrap route is disabled.
 - Local uploads are supported for development, but long-term storage should be Google Drive or another durable object store.
 - CORS is locked to the frontend URLs in `apps/api/.env` with a central allowlist in [env.ts](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/src/config/env.ts) and enforced in [app.ts](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/src/app.ts).
 - Google Drive secrets should live only in [apps/api/.env](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/.env), not in the frontend env file.
+- Gemini caption generation requires `GEMINI_API_KEY` in [apps/api/.env](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/.env). Use Queue Detail → **Generate with Gemini** to create AI captions from image/video media.
 - A fuller project status and setup guide lives in [docs/PHASE_1_SETUP.md](/Users/yashmadhavtech/Documents/AI_Automation/docs/PHASE_1_SETUP.md).
 - Full user workflow guide lives in [docs/WORKFLOW_USER_GUIDE.md](/Users/yashmadhavtech/Documents/AI_Automation/docs/WORKFLOW_USER_GUIDE.md).
 

@@ -12,6 +12,7 @@ const envSchema = z.object({
   CLIENT_URL: z.string().url().default("http://localhost:5173"),
   UPLOAD_DIR: z.string().default("uploads"),
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
+  GEMINI_API_KEY: z.string().optional().default(""),
   GOOGLE_CLIENT_ID: z.string().optional().default(""),
   GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
   GOOGLE_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/google-drive/oauth/callback"),
@@ -35,5 +36,6 @@ export const env = {
     .map((item) => item.trim())
     .filter(Boolean),
   googleDriveScopes: parsed.data.GOOGLE_DRIVE_SCOPES.split(/\s+/).filter(Boolean),
+  geminiConfigured: Boolean(parsed.data.GEMINI_API_KEY),
   googleConfigured: Boolean(parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET)
 };

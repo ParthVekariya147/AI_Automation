@@ -97,8 +97,7 @@ export const suggestHashtags = asyncHandler(async (req: AuthedRequest, res: Resp
   res.json({
     success: true,
     data: {
-      hashtags,
-      note: "This is a local placeholder suggestion layer until Gemini is connected."
+      hashtags
     }
   });
 });

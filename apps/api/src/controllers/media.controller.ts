@@ -1,9 +1,11 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import type { Response } from "express";
 import multer from "multer";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { MediaAssetModel } from "../models/MediaAsset.js";
+import { generateInstagramCaptionFromMedia } from "../services/ai.service.js";
 import { createAuditLog } from "../services/audit.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -32,6 +34,13 @@ const updateMediaSchema = z.object({
   likeCount: z.coerce.number().min(0).optional(),
   reachCount: z.coerce.number().min(0).optional()
 });
+
+const generateCaptionSchema = z.object({
+  businessId: z.string().min(1),
+  tone: z.string().trim().max(100).optional()
+});
+
+const MAX_GEMINI_INLINE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 
 const storage = multer.diskStorage({
   destination: env.UPLOAD_DIR,
@@ -262,4 +271,121 @@ export const updateMediaWorkflow = asyncHandler(async (req: AuthedRequest, res: 
   });
 
   res.json({ success: true, data: asset });
+});
+
+export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  if (!env.GEMINI_API_KEY) {
+    throw new ApiError(400, "GEMINI_API_KEY is missing. Add it in apps/api/.env");
+  }
+
+  const payload = generateCaptionSchema.parse(req.body);
+
+  const asset = await MediaAssetModel.findOne({
+    _id: req.params.id,
+    businessId: payload.businessId
+  });
+
+  if (!asset) {
+    throw new ApiError(404, "Media asset not found");
+  }
+
+  let mediaBuffer: Buffer | null = null;
+
+  if (asset.filePath) {
+    const absolutePath = path.resolve(process.cwd(), asset.filePath);
+    mediaBuffer = await readFile(absolutePath);
+  } else if (asset.previewUrl?.startsWith("http")) {
+    const remote = await fetch(asset.previewUrl);
+    if (!remote.ok) {
+      throw new ApiError(
+        400,
+        "Media file could not be downloaded for caption generation. Use a local upload or public preview URL."
+      );
+    }
+
+    const arrayBuffer = await remote.arrayBuffer();
+    mediaBuffer = Buffer.from(arrayBuffer);
+  }
+
+  if (!mediaBuffer) {
+    throw new ApiError(
+      400,
+      "No accessible media source found. Upload locally or provide a public preview URL first."
+    );
+  }
+
+  if (mediaBuffer.byteLength > MAX_GEMINI_INLINE_FILE_SIZE_BYTES) {
+    throw new ApiError(
+      400,
+      "Media is too large for inline Gemini analysis. Use a file up to 10MB for caption generation."
+    );
+  }
+
+  const generated = await generateInstagramCaptionFromMedia({
+    mimeType: asset.mimeType,
+    mediaBase64: mediaBuffer.toString("base64"),
+    mediaType: asset.mediaType,
+    originalName: asset.originalName,
+    tone: payload.tone
+  });
+
+  asset.aiCaption = generated.caption;
+  await asset.save();
+
+  await createAuditLog({
+    actorUserId: req.user.id,
+    businessId: payload.businessId,
+    action: "media.ai_caption_generated",
+    entityType: "MediaAsset",
+    entityId: asset.id
+  });
+
+  res.json({
+    success: true,
+    data: {
+      mediaAssetId: asset.id,
+      aiCaption: generated.caption,
+      hashtags: generated.hashtags
+    }
+  });
+});
+
+export const deleteMediaAsset = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const businessId = req.body.businessId || req.query.businessId?.toString();
+
+  if (!businessId) {
+    throw new ApiError(400, "businessId is required");
+  }
+
+  const asset = await MediaAssetModel.findOneAndDelete({
+    _id: req.params.id,
+    businessId
+  });
+
+  if (!asset) {
+    throw new ApiError(404, "Media asset not found");
+  }
+
+  await createAuditLog({
+    actorUserId: req.user.id,
+    businessId,
+    action: "media.deleted",
+    entityType: "MediaAsset",
+    entityId: asset.id
+  });
+
+  res.json({
+    success: true,
+    data: {
+      _id: asset._id
+    }
+  });
 });
