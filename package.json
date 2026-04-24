@@ -1,0 +1,20 @@
+{
+  "name": "ai-instagram-automation-suite",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace api",
+    "dev:all": "concurrently \"npm run dev --workspace api\" \"npm run dev --workspace web\"",
+    "dev:api": "npm run dev --workspace api",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace api && npm run build --workspace web",
+    "lint": "npm run lint --workspace api && npm run lint --workspace web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
