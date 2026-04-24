@@ -2,13 +2,16 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { useState } from "react";
 import { Panel } from "../components/Panel";
+import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
+import { extractApiError } from "../lib/errors";
 import { formatSchedule, getMediaOpenUrl, getMediaPreviewUrl } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
 
 export function QueueDetailPage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const { id } = useParams();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
   const [saving, setSaving] = useState(false);
@@ -31,6 +34,12 @@ export function QueueDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Update failed",
+        description: extractApiError(error, "Queue details could not be updated.")
+      });
     } finally {
       setSaving(false);
     }
@@ -55,7 +64,7 @@ export function QueueDetailPage() {
           <Link to="/queue" className="text-sm font-medium text-emerald-800">
             Back to queue
           </Link>
-          <h1 className="mt-2 text-3xl font-semibold text-slate-950">{asset.originalName}</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-950">{asset.originalName}</h1>
         </div>
         {openUrl ? (
           <a
@@ -80,11 +89,11 @@ export function QueueDetailPage() {
                 <img
                   src={previewUrl}
                   alt={asset.originalName}
-                  className="h-full w-full object-cover"
+                  className="h-full w-full bg-[#f0f2eb] object-contain"
                 />
               ) : asset.mediaType === "video" ? (
                 previewUrl ? (
-                  <video src={previewUrl} controls className="h-full w-full object-cover" />
+                  <video src={previewUrl} controls className="h-full w-full bg-[#0f172a] object-contain" />
                 ) : (
                   <div className="flex h-full items-center justify-center text-slate-500">
                     Video preview is not available
@@ -241,11 +250,20 @@ export function QueueDetailPage() {
               >
                 <div className="aspect-[4/3] bg-[#eef1ea]">
                   {getMediaPreviewUrl(related) ? (
-                    <img
-                      src={getMediaPreviewUrl(related)}
-                      alt={related.originalName}
-                      className="h-full w-full object-cover"
-                    />
+                    related.mediaType === "video" ? (
+                      <video
+                        src={getMediaPreviewUrl(related)}
+                        className="h-full w-full object-cover"
+                        muted
+                        playsInline
+                      />
+                    ) : (
+                      <img
+                        src={getMediaPreviewUrl(related)}
+                        alt={related.originalName}
+                        className="h-full w-full object-cover"
+                      />
+                    )
                   ) : (
                     <div className="flex h-full items-center justify-center text-sm text-slate-500">
                       No preview

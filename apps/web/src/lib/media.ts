@@ -9,9 +9,15 @@ const apiBaseUrl = (() => {
   }
 })();
 
+export function resolveApiAssetUrl(url?: string) {
+  if (!url) return "";
+  if (url.startsWith("http")) return url;
+  return `${apiBaseUrl}${url}`;
+}
+
 export function getMediaPreviewUrl(asset: MediaAsset) {
   if (asset.previewUrl) {
-    return asset.previewUrl;
+    return resolveApiAssetUrl(asset.previewUrl);
   }
 
   if (asset.driveThumbnailLink) {
@@ -32,6 +38,10 @@ export function getMediaPreviewUrl(asset: MediaAsset) {
 export function getMediaOpenUrl(asset: MediaAsset) {
   if (asset.driveViewLink) {
     return asset.driveViewLink;
+  }
+
+  if (asset.previewUrl) {
+    return resolveApiAssetUrl(asset.previewUrl);
   }
 
   if (asset.publicUrl?.startsWith("http")) {

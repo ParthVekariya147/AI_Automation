@@ -2,8 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Panel } from "../components/Panel";
+import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
-import { formatSchedule } from "../lib/media";
+import { extractApiError } from "../lib/errors";
+import { getMediaPreviewUrl } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
 
@@ -12,6 +14,7 @@ const postTypeOptions = ["single", "carousel", "video"] as const;
 
 export function QueuePage() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
   const [search, setSearch] = useState("");
 
@@ -36,16 +39,24 @@ export function QueuePage() {
 
   async function patchRow(id: string, payload: Record<string, unknown>) {
     if (!activeBusinessId) return;
-    await api.patch(`/media/${id}`, { businessId: activeBusinessId, ...payload });
-    queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
-    queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+    try {
+      await api.patch(`/media/${id}`, { businessId: activeBusinessId, ...payload });
+      queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+      queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+    } catch (error) {
+      toast({
+        tone: "error",
+        title: "Update failed",
+        description: extractApiError(error, "Queue row could not be updated.")
+      });
+    }
   }
 
   return (
     <div className="space-y-6">
       <Panel
         title="Content Queue"
-        description="Each row is one file. Use the same Group ID for files that should become one carousel. Click a row to open the detailed planning screen."
+        description="Each row is one imported media file. Use this table for media workflow updates, then use the Posts page for draft scheduling and publish actions."
       >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <input
@@ -60,9 +71,10 @@ export function QueuePage() {
         </div>
 
         <div className="mt-6 overflow-x-auto">
-          <table className="min-w-[1300px] border-separate border-spacing-y-3">
+          <table className="min-w-[1360px] border-separate border-spacing-y-3">
             <thead>
               <tr className="text-left text-xs uppercase tracking-[0.18em] text-slate-500">
+                <th className="px-3">Preview</th>
                 <th className="px-3">File Name</th>
                 <th className="px-3">Drive File ID</th>
                 <th className="px-3">Status</th>
@@ -79,6 +91,33 @@ export function QueuePage() {
               {filtered.map((item) => (
                 <tr key={item._id} className="rounded-2xl bg-[#fbfbf8] shadow-[0_8px_18px_rgba(15,23,42,0.04)]">
                   <td className="rounded-l-2xl px-3 py-4">
+                    <Link
+                      to={`/queue/${item._id}`}
+                      className="flex h-14 w-16 items-center justify-center overflow-hidden rounded-xl border border-[#d7ddd4] bg-[#eef1ea]"
+                    >
+                      {getMediaPreviewUrl(item) ? (
+                        item.mediaType === "video" ? (
+                          <video
+                            src={getMediaPreviewUrl(item)}
+                            className="h-full w-full object-cover"
+                            muted
+                            playsInline
+                          />
+                        ) : (
+                          <img
+                            src={getMediaPreviewUrl(item)}
+                            alt={item.originalName}
+                            className="h-full w-full object-cover"
+                          />
+                        )
+                      ) : (
+                        <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">
+                          No preview
+                        </span>
+                      )}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-4">
                     <div>
                       <p className="font-medium text-slate-900">{item.originalName}</p>
                       <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">
@@ -182,7 +221,7 @@ export function QueuePage() {
           />
           <Tip
             title="Scheduling"
-            body="You can schedule directly in the table, then open the detail page if you want to preview the file before finalizing."
+            body="Set media-level schedule details here, then open Posts when you want to manage draft timing and publish actions together."
           />
           <Tip
             title="Analytics"

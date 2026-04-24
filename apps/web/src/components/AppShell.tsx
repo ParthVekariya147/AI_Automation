@@ -20,13 +20,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[#f3f4ef] text-slate-900">
-      <div className="mx-auto flex max-w-[1500px] gap-6 px-3 py-4 sm:px-4 sm:py-6">
-        <aside className="sticky top-6 hidden h-[calc(100vh-3rem)] w-72 shrink-0 rounded-[28px] border border-[#d7ddd4] bg-[#10332b] p-6 text-white shadow-[0_18px_55px_rgba(16,51,43,0.18)] lg:block">
+      <div className="flex w-full gap-5 px-2 py-3 sm:px-3 sm:py-4">
+        <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-64 shrink-0 rounded-[28px] border border-[#d7ddd4] bg-[#10332b] p-5 text-white shadow-[0_18px_55px_rgba(16,51,43,0.18)] lg:block">
           <Link to="/" className="block">
             <p className="text-xs uppercase tracking-[0.35em] text-emerald-200/80">
               Content Ops
             </p>
-            <h1 className="mt-3 text-2xl font-semibold leading-tight">
+            <h1 className="mt-2 text-xl font-semibold leading-tight">
               Instagram Automation Suite
             </h1>
           </Link>
@@ -37,10 +37,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `block rounded-2xl px-4 py-3 text-sm font-medium transition ${
-                    isActive
-                      ? "bg-[#dfe8c8] text-[#10332b]"
-                      : "text-slate-200 hover:bg-white/10 hover:text-white"
+                  `block rounded-2xl px-4 py-2.5 text-sm font-medium transition ${isActive
+                    ? "bg-[#dfe8c8] text-[#10332b]"
+                    : "text-slate-200 hover:bg-white/10 hover:text-white"
                   }`
                 }
               >
@@ -61,7 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </p>
             <button
               onClick={clearSession}
-              className="mt-5 rounded-full border border-white/15 px-4 py-2 text-xs uppercase tracking-[0.2em] text-slate-100 transition hover:border-[#dfe8c8] hover:text-[#dfe8c8]"
+              className="mt-5 rounded-full border border-white/15 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-slate-100 transition hover:border-[#dfe8c8] hover:text-[#dfe8c8]"
             >
               Sign out
             </button>
@@ -75,7 +74,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <p className="text-xs uppercase tracking-[0.3em] text-emerald-800/70">
                   Content Ops
                 </p>
-                <h1 className="mt-2 text-2xl font-semibold text-slate-950">
+                <h1 className="mt-2 text-xl font-semibold text-slate-950">
                   Instagram Automation Suite
                 </h1>
               </div>
@@ -89,10 +88,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${
-                        isActive
-                          ? "bg-[#10332b] text-white"
-                          : "bg-[#f3f4ef] text-slate-700 hover:bg-[#e7ebe0]"
+                      `whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${isActive
+                        ? "bg-[#10332b] text-white"
+                        : "bg-[#f3f4ef] text-slate-700 hover:bg-[#e7ebe0]"
                       }`
                     }
                   >
@@ -109,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <p className="text-xs uppercase tracking-[0.3em] text-emerald-800/70">
                   Workflow control
                 </p>
-                <h2 className="mt-2 text-3xl font-semibold leading-tight text-slate-950">
+                <h2 className="mt-2 text-2xl font-semibold leading-tight text-slate-950">
                   Drive files, queue planning, and posting in one workspace
                 </h2>
               </div>

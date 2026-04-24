@@ -6,10 +6,10 @@ import { InstagramAccountModel } from "../models/InstagramAccount.js";
 import { createAuditLog } from "../services/audit.service.js";
 import {
   createGoogleOAuthClient,
-  fetchDriveFilePreview,
+  ensureDriveThumbnailCached,
   fetchGoogleProfile,
   listDriveFiles,
-  listDriveFolders,
+  listRelevantDriveFolders,
   signGoogleDriveState,
   verifyGoogleDriveState
 } from "../services/google-drive.service.js";
@@ -42,6 +42,14 @@ function buildDriveBrowserRedirect(
     target.searchParams.set(key, value);
   }
   return target.toString();
+}
+
+async function findActiveDriveConnection(businessId: string) {
+  return GoogleDriveConnectionModel.findOne({
+    businessId,
+    isActive: true,
+    refreshToken: { $exists: true, $ne: null }
+  }).sort({ updatedAt: -1 });
 }
 
 const instagramSchema = z.object({
@@ -208,6 +216,7 @@ export const startDriveOAuth = asyncHandler(async (req: AuthedRequest, res: Resp
   const scopes = Array.from(
     new Set([
       ...env.googleDriveScopes,
+      "https://www.googleapis.com/auth/drive.readonly",
       "https://www.googleapis.com/auth/userinfo.email"
     ])
   );
@@ -342,11 +351,7 @@ export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: R
     throw new ApiError(400, "businessId is required");
   }
 
-  const connection = await GoogleDriveConnectionModel.findOne({
-    businessId,
-    isActive: true,
-    refreshToken: { $exists: true, $ne: null }
-  }).sort({ updatedAt: -1 });
+  const connection = await findActiveDriveConnection(businessId);
 
   if (!connection) {
     throw new ApiError(
@@ -355,7 +360,7 @@ export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: R
     );
   }
 
-  const folders = await listDriveFolders(connection.id, parentFolderId);
+  const folders = await listRelevantDriveFolders(connection.id, parentFolderId);
   res.json({ success: true, data: folders });
 });
 
@@ -367,11 +372,7 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
     throw new ApiError(400, "businessId is required");
   }
 
-  const connection = await GoogleDriveConnectionModel.findOne({
-    businessId,
-    isActive: true,
-    refreshToken: { $exists: true, $ne: null }
-  }).sort({ updatedAt: -1 });
+  const connection = await findActiveDriveConnection(businessId);
 
   if (!connection) {
     throw new ApiError(
@@ -380,8 +381,63 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
     );
   }
 
-  const files = await listDriveFiles(connection.id, folderId);
-  res.json({ success: true, data: files });
+  let files = await listDriveFiles(connection.id, folderId);
+
+  if (!folderId && files.length === 0) {
+    const relevantFolders = await listRelevantDriveFolders(connection.id);
+
+    if (relevantFolders.length) {
+      const nestedFileLists = await Promise.all(
+        relevantFolders.map((folder) => listDriveFiles(connection.id, folder.id))
+      );
+
+      const dedupedById = new Map<string, (typeof nestedFileLists)[number][number]>();
+
+      for (const list of nestedFileLists) {
+        for (const file of list) {
+          if (!file.id) continue;
+          if (!dedupedById.has(file.id)) {
+            dedupedById.set(file.id, file);
+          }
+        }
+      }
+
+      files = Array.from(dedupedById.values()).sort((left, right) => {
+        const leftTime = new Date(left.createdTime || 0).getTime();
+        const rightTime = new Date(right.createdTime || 0).getTime();
+        return rightTime - leftTime;
+      });
+    }
+  }
+
+  const hydratedFiles = await Promise.all(
+    files.map(async (file) => {
+      if (!file.id) {
+        return {
+          ...file,
+          previewUrl: undefined
+        };
+      }
+
+      return {
+        ...file,
+        previewUrl: await ensureDriveThumbnailCached(connection.id, businessId, {
+          id: file.id,
+          mimeType: file.mimeType,
+          name: file.name,
+          thumbnailLink: file.thumbnailLink
+        }).catch((error) => {
+          console.warn(
+            `Drive preview unavailable for file ${file.id}:`,
+            error instanceof Error ? error.message : error
+          );
+          return undefined;
+        })
+      };
+    })
+  );
+
+  res.json({ success: true, data: hydratedFiles });
 });
 
 export const previewDriveFile = asyncHandler(async (req: AuthedRequest, res: Response) => {
@@ -396,11 +452,7 @@ export const previewDriveFile = asyncHandler(async (req: AuthedRequest, res: Res
     throw new ApiError(400, "fileId is required");
   }
 
-  const connection = await GoogleDriveConnectionModel.findOne({
-    businessId,
-    isActive: true,
-    refreshToken: { $exists: true, $ne: null }
-  }).sort({ updatedAt: -1 });
+  const connection = await findActiveDriveConnection(businessId);
 
   if (!connection) {
     throw new ApiError(
@@ -409,8 +461,15 @@ export const previewDriveFile = asyncHandler(async (req: AuthedRequest, res: Res
     );
   }
 
-  const preview = await fetchDriveFilePreview(connection.id, fileId);
-  res.setHeader("Content-Type", preview.contentType);
-  res.setHeader("Cache-Control", "private, max-age=300");
-  res.send(preview.buffer);
+  const previewUrl = await ensureDriveThumbnailCached(connection.id, businessId, {
+    id: fileId,
+    mimeType: req.query.mimeType?.toString() || "image/jpeg",
+    thumbnailLink: req.query.thumbnailLink?.toString()
+  });
+
+  if (!previewUrl) {
+    throw new ApiError(404, "Preview is not available for this file");
+  }
+
+  res.redirect(previewUrl);
 });

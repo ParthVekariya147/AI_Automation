@@ -9,6 +9,10 @@
     "Segoe UI", "Avenir Next", "Helvetica Neue", sans-serif;
 }
 
+html {
+  font-size: 15px;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -17,4 +21,5 @@ body {
 
 #root {
   min-height: 100vh;
+  width: 100%;
 }

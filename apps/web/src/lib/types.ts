@@ -48,6 +48,8 @@ export interface DriveFolder {
   id: string;
   name: string;
   webViewLink?: string | null;
+  containsImages: boolean;
+  containsVideos: boolean;
 }
 
 export interface DriveFile {
@@ -55,6 +57,7 @@ export interface DriveFile {
   name: string;
   mimeType: string;
   size?: string | null;
+  previewUrl?: string | null;
   thumbnailLink?: string | null;
   webViewLink?: string | null;
   createdTime?: string | null;

@@ -92,33 +92,65 @@ export const importFromDrive = asyncHandler(async (req: AuthedRequest, res: Resp
 
   const payload = importFromDriveSchema.parse(req.body);
   const mediaType = payload.mimeType.startsWith("video/") ? "video" : "image";
-
-  const asset = await MediaAssetModel.create({
+  let asset = await MediaAssetModel.findOne({
     businessId: payload.businessId,
-    uploadedBy: req.user.id,
-    source: "google_drive",
-    mediaType,
-    originalName: payload.originalName,
-    mimeType: payload.mimeType,
-    sizeInBytes: payload.sizeInBytes,
-    folderName: payload.folderName,
-    previewUrl: payload.previewUrl || payload.driveThumbnailLink || payload.driveViewLink,
-    driveViewLink: payload.driveViewLink,
-    driveThumbnailLink: payload.driveThumbnailLink,
-    driveFileId: payload.driveFileId,
-    driveFolderId: payload.driveFolderId,
-    status: "ready"
+    driveFileId: payload.driveFileId
   });
+  let alreadyImported = Boolean(asset);
 
-  await createAuditLog({
-    actorUserId: req.user.id,
-    businessId: payload.businessId,
-    action: "media.imported_from_drive",
-    entityType: "MediaAsset",
-    entityId: asset.id
+  if (!asset) {
+    try {
+      asset = await MediaAssetModel.create({
+        businessId: payload.businessId,
+        uploadedBy: req.user.id,
+        source: "google_drive",
+        mediaType,
+        originalName: payload.originalName,
+        mimeType: payload.mimeType,
+        sizeInBytes: payload.sizeInBytes,
+        folderName: payload.folderName,
+        previewUrl: payload.previewUrl || payload.driveThumbnailLink || payload.driveViewLink,
+        driveViewLink: payload.driveViewLink,
+        driveThumbnailLink: payload.driveThumbnailLink,
+        driveFileId: payload.driveFileId,
+        driveFolderId: payload.driveFolderId,
+        status: "ready"
+      });
+    } catch (error) {
+      const duplicateError = error as { code?: number };
+      if (duplicateError.code === 11000) {
+        alreadyImported = true;
+        asset = await MediaAssetModel.findOne({
+          businessId: payload.businessId,
+          driveFileId: payload.driveFileId
+        });
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  if (!asset) {
+    throw new ApiError(500, "Imported asset could not be loaded");
+  }
+
+  if (!alreadyImported) {
+    await createAuditLog({
+      actorUserId: req.user.id,
+      businessId: payload.businessId,
+      action: "media.imported_from_drive",
+      entityType: "MediaAsset",
+      entityId: asset.id
+    });
+  }
+
+  res.status(alreadyImported ? 200 : 201).json({
+    success: true,
+    data: asset,
+    meta: {
+      alreadyImported
+    }
   });
-
-  res.status(201).json({ success: true, data: asset });
 });
 
 export const listMedia = asyncHandler(async (req: AuthedRequest, res: Response) => {
@@ -150,11 +182,11 @@ export const getMediaDetail = asyncHandler(async (req: AuthedRequest, res: Respo
 
   const relatedGroupAssets = asset.groupId
     ? await MediaAssetModel.find({
-        businessId,
-        groupId: asset.groupId
-      })
-        .sort({ createdAt: 1 })
-        .lean()
+      businessId,
+      groupId: asset.groupId
+    })
+      .sort({ createdAt: 1 })
+      .lean()
     : [];
 
   res.json({

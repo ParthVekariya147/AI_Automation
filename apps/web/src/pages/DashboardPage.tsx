@@ -50,9 +50,9 @@ export function DashboardPage() {
         >
           <ol className="space-y-3 text-sm leading-6 text-slate-700">
             <li>1. Connect Google Drive from the Drive Browser page.</li>
-            <li>2. Open a folder, preview image/video files, and import the ones you want.</li>
-            <li>3. Go to Content Queue and fill `Group ID`, `Post Type`, `Scheduled Time`, and caption data.</li>
-            <li>4. Open any row to edit details, preview the file, and update posting data.</li>
+            <li>2. Select a folder and click `Fetch Data` to load cached previews and files.</li>
+            <li>3. Go to Content Queue to organize media details like Group ID and post type.</li>
+            <li>4. Go to Posts to manage captions, scheduling, hashtags, and publish actions.</li>
           </ol>
         </Panel>
       </div>
@@ -97,8 +97,9 @@ export function DashboardPage() {
           description="The new navigation matches the work itself."
         >
           <div className="space-y-4 text-sm text-slate-700">
-            <InfoLine label="Drive Browser" value="See folders and preview Google Drive images/videos" />
-            <InfoLine label="Content Queue" value="View the full table with scheduling and posting metadata" />
+            <InfoLine label="Drive Browser" value="Fetch Drive data on demand and see cached image previews" />
+            <InfoLine label="Content Queue" value="Manage imported media workflow and grouping" />
+            <InfoLine label="Posts" value="Manage draft captions, scheduling, hashtags, and publish actions" />
             <InfoLine label="Queue Detail" value="Open one file and edit all details in one place" />
             <InfoLine label="Integrations" value="Connect Instagram accounts and review Drive connections" />
           </div>
