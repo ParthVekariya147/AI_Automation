@@ -3,9 +3,11 @@ import { z } from "zod";
 import { AnalyticsLikeModel } from "../models/AnalyticsLike.js";
 import { PostDraftModel } from "../models/PostDraft.js";
 import { PublishJobModel } from "../models/PublishJob.js";
+import { InstagramAccountModel } from "../models/InstagramAccount.js";
+import { MediaAssetModel } from "../models/MediaAsset.js";
 import { createAuditLog } from "../services/audit.service.js";
 import { suggestHashtagsFromCaption } from "../services/ai.service.js";
-import { publishToInstagram } from "../services/instagram.service.js";
+import { postSingleMedia, postVideoMedia, postCarouselMedia } from "../services/instagram.service.js";
 import { suggestSmartTime } from "../services/smart-timing.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -147,13 +149,59 @@ export const publishPost = asyncHandler(async (req: AuthedRequest, res: Response
     throw new ApiError(404, "Post draft not found");
   }
 
+  const account = await InstagramAccountModel.findById(draft.instagramAccountId);
+  if (!account || !account.accessToken || !account.igUserId) {
+    throw new ApiError(400, "Instagram account is not fully connected");
+  }
+
+  const mediaAssets = await MediaAssetModel.find({ _id: { $in: draft.mediaAssetIds } });
+  if (!mediaAssets.length) {
+    throw new ApiError(400, "No media assets found for this draft");
+  }
+
+  const baseUrl = `${req.protocol}://${req.get("host")}`;
+  const getFullUrl = (url?: string) => {
+    if (!url) return "";
+    return url.startsWith("http") ? url : `${baseUrl}${url}`;
+  };
+
   draft.status = "posting";
   await draft.save();
 
-  const result = await publishToInstagram();
+  let externalPostId: string;
+  let permalink: string;
+  const captionWithHashtags = `${draft.caption}\n\n${draft.hashtags.join(" ")}`.trim();
 
-  draft.status = result.status;
-  await draft.save();
+  try {
+    if (draft.postType === "video") {
+      const videoAsset = mediaAssets.find((m) => m.mediaType === "video");
+      if (!videoAsset) throw new ApiError(400, "No video asset found");
+      const url = getFullUrl(videoAsset.publicUrl || videoAsset.previewUrl);
+      const result = await postVideoMedia(account.igUserId, account.accessToken, url, captionWithHashtags);
+      externalPostId = result.externalPostId;
+      permalink = result.permalink;
+    } else if (draft.postType === "carousel" || mediaAssets.length > 1) {
+      const urls = mediaAssets.map((m) => getFullUrl(m.publicUrl || m.previewUrl));
+      const result = await postCarouselMedia(account.igUserId, account.accessToken, urls, captionWithHashtags);
+      externalPostId = result.externalPostId;
+      permalink = result.permalink;
+    } else {
+      const imageAsset = mediaAssets[0];
+      const url = getFullUrl(imageAsset.publicUrl || imageAsset.previewUrl);
+      const result = await postSingleMedia(account.igUserId, account.accessToken, url, captionWithHashtags);
+      externalPostId = result.externalPostId;
+      permalink = result.permalink;
+    }
+
+    draft.status = "live";
+    draft.igMediaId = externalPostId;
+    draft.permalink = permalink;
+    await draft.save();
+  } catch (error) {
+    draft.status = "error";
+    await draft.save();
+    throw error;
+  }
 
   await PublishJobModel.findOneAndUpdate(
     { postDraftId: draft._id },

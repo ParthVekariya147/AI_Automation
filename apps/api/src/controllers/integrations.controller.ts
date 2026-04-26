@@ -13,6 +13,13 @@ import {
   signGoogleDriveState,
   verifyGoogleDriveState
 } from "../services/google-drive.service.js";
+import {
+  exchangeFacebookCode,
+  fetchConnectedInstagramAccounts,
+  getFacebookOAuthUrl,
+  signFacebookState,
+  verifyFacebookState
+} from "../services/instagram.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
 import { ApiError } from "../utils/api-error.js";
@@ -38,6 +45,17 @@ function buildDriveBrowserRedirect(
   params: Record<string, string>
 ) {
   const target = new URL("/drive-browser", resolveSafeFrontendOrigin(frontendOrigin));
+  for (const [key, value] of Object.entries(params)) {
+    target.searchParams.set(key, value);
+  }
+  return target.toString();
+}
+
+function buildIntegrationsRedirect(
+  frontendOrigin: string | undefined,
+  params: Record<string, string>
+) {
+  const target = new URL("/integrations", resolveSafeFrontendOrigin(frontendOrigin));
   for (const [key, value] of Object.entries(params)) {
     target.searchParams.set(key, value);
   }
@@ -101,6 +119,126 @@ export const connectInstagramAccount = asyncHandler(
     res.status(201).json({ success: true, data: account });
   }
 );
+
+export const startInstagramOAuth = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const businessId = req.query.businessId?.toString();
+  const frontendOrigin = req.query.frontendOrigin?.toString();
+
+  if (!businessId) {
+    throw new ApiError(400, "businessId is required");
+  }
+
+  const state = signFacebookState({
+    businessId,
+    userId: req.user.id,
+    frontendOrigin
+  });
+
+  const authUrl = getFacebookOAuthUrl(state);
+
+  res.json({
+    success: true,
+    data: { authUrl }
+  });
+});
+
+export const instagramOAuthCallback = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const code = req.query.code?.toString();
+  const state = req.query.state?.toString();
+  const oauthError = req.query.error?.toString();
+
+  let parsedState:
+    | {
+      businessId: string;
+      userId: string;
+      frontendOrigin?: string;
+    }
+    | undefined;
+
+  if (state) {
+    try {
+      parsedState = verifyFacebookState(state);
+    } catch {
+      return res.redirect(
+        buildIntegrationsRedirect(undefined, { ig_connected: "0", error: "invalid_state" })
+      );
+    }
+  }
+
+  if (oauthError) {
+    return res.redirect(
+      buildIntegrationsRedirect(parsedState?.frontendOrigin, {
+        ig_connected: "0",
+        error: oauthError
+      })
+    );
+  }
+
+  if (!code || !parsedState) {
+    return res.redirect(
+      buildIntegrationsRedirect(parsedState?.frontendOrigin, {
+        ig_connected: "0",
+        error: "missing_code_or_state"
+      })
+    );
+  }
+
+  try {
+    const accessToken = await exchangeFacebookCode(code);
+    const igAccounts = await fetchConnectedInstagramAccounts(accessToken);
+
+    if (igAccounts.length === 0) {
+      return res.redirect(
+        buildIntegrationsRedirect(parsedState.frontendOrigin, {
+          ig_connected: "0",
+          error: "no_instagram_accounts_found"
+        })
+      );
+    }
+
+    for (const acc of igAccounts) {
+      await InstagramAccountModel.findOneAndUpdate(
+        { businessId: parsedState.businessId, igUserId: acc.igUserId },
+        {
+          businessId: parsedState.businessId,
+          name: acc.name,
+          handle: acc.handle,
+          igUserId: acc.igUserId,
+          pageId: acc.pageId,
+          accessToken,
+          isActive: true
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    await createAuditLog({
+      actorUserId: parsedState.userId,
+      businessId: parsedState.businessId,
+      action: "instagram.oauth_connected",
+      entityType: "InstagramAccount",
+      metadata: { count: igAccounts.length }
+    });
+
+    return res.redirect(
+      buildIntegrationsRedirect(parsedState.frontendOrigin, {
+        ig_connected: "1"
+      })
+    );
+  } catch (error) {
+    console.error("Facebook OAuth callback failed", error);
+    return res.redirect(
+      buildIntegrationsRedirect(parsedState?.frontendOrigin, {
+        ig_connected: "0",
+        error: "oauth_callback_failed"
+      })
+    );
+  }
+});
 
 export const listDriveConnections = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const businessId = req.query.businessId?.toString();

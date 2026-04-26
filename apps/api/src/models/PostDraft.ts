@@ -16,6 +16,7 @@ export interface PostDraftEntity {
   groupId?: string;
   aiCaption?: string;
   igMediaId?: string;
+  permalink?: string;
   likeCount?: number;
   reachCount?: number;
   driveUploadRequested: boolean;
@@ -50,6 +51,7 @@ const postDraftSchema = new Schema<PostDraftEntity>(
     groupId: { type: String, trim: true },
     aiCaption: { type: String, trim: true, default: "" },
     igMediaId: { type: String, trim: true },
+    permalink: { type: String, trim: true },
     likeCount: { type: Number, min: 0, default: 0 },
     reachCount: { type: Number, min: 0, default: 0 },
     driveUploadRequested: { type: Boolean, default: false }

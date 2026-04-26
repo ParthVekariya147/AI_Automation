@@ -9,8 +9,11 @@ import { useAuthStore } from "../store/auth-store";
 export function IntegrationsPage() {
   const queryClient = useQueryClient();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
-  const [igForm, setIgForm] = useState({ name: "", handle: "" });
   const [error, setError] = useState("");
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const igConnected = searchParams.get("ig_connected");
+  const igError = searchParams.get("error");
 
   const { data: accounts = [] } = useQuery({
     queryKey: ["ig-accounts", activeBusinessId],
@@ -31,17 +34,19 @@ export function IntegrationsPage() {
   const connectedDrive = drives.find((drive: any) => drive.isActive && drive.isOAuthReady);
   const driveStatus = connectedDrive ? "Connected" : drives.length ? "Disconnected" : "Not connected";
 
-  async function addInstagram(event: React.FormEvent) {
-    event.preventDefault();
+  async function connectInstagram() {
     setError("");
-
     try {
       if (!activeBusinessId) return;
-      await api.post("/instagram/connect", { businessId: activeBusinessId, ...igForm });
-      setIgForm({ name: "", handle: "" });
-      queryClient.invalidateQueries({ queryKey: ["ig-accounts", activeBusinessId] });
+      const response = await api.get("/instagram/oauth/start", {
+        params: {
+          businessId: activeBusinessId,
+          frontendOrigin: window.location.origin
+        }
+      });
+      window.location.href = response.data.data.authUrl;
     } catch (currentError) {
-      setError(extractApiError(currentError, "Instagram account could not be added."));
+      setError(extractApiError(currentError, "Could not start Facebook OAuth."));
     }
   }
 
@@ -81,24 +86,29 @@ export function IntegrationsPage() {
             </div>
           ))}
         </div>
-        <form className="mt-5 grid gap-3" onSubmit={addInstagram}>
-          <input
-            className="rounded-2xl border border-slate-200 px-4 py-3"
-            placeholder="Account name"
-            value={igForm.name}
-            onChange={(event) => setIgForm({ ...igForm, name: event.target.value })}
-          />
-          <input
-            className="rounded-2xl border border-slate-200 px-4 py-3"
-            placeholder="@handle"
-            value={igForm.handle}
-            onChange={(event) => setIgForm({ ...igForm, handle: event.target.value })}
-          />
-          {error ? <p className="text-sm text-red-600">{error}</p> : null}
-          <button className="rounded-2xl bg-[#10332b] px-4 py-3 text-white">
-            Connect Instagram account
+        {igConnected === "1" ? (
+          <div className="mt-4 rounded-xl bg-green-50 p-4 text-sm text-green-800">
+            Successfully connected Instagram accounts!
+          </div>
+        ) : null}
+        {igError ? (
+          <div className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">
+            Failed to connect Instagram: {igError}
+          </div>
+        ) : null}
+        
+        <div className="mt-5 border-t border-slate-200 pt-5">
+          <button
+            onClick={connectInstagram}
+            className="flex w-full items-center justify-center gap-3 rounded-2xl bg-[#1877F2] px-4 py-3 font-semibold text-white transition-colors hover:bg-[#1865f2]"
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" className="size-5">
+              <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.469h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.469h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+            </svg>
+            Connect via Facebook
           </button>
-        </form>
+          {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+        </div>
       </Panel>
     </div>
   );

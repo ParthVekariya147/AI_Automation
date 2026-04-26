@@ -73,7 +73,7 @@ export function QueueDetailPage() {
       const response = await api.post(`/media/${id}/generate-caption`, {
         businessId: activeBusinessId
       });
-      const generatedCaption = response.data?.data?.aiCaption || "";
+      const generatedCaption = response.data?.data?.caption || response.data?.data?.asset?.aiCaption || "";
       setAiCaption(generatedCaption);
       queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
@@ -287,7 +287,17 @@ export function QueueDetailPage() {
       {data.relatedGroupAssets.length > 1 ? (
         <Panel
           title="Related files in this group"
-          description="Compact suggestions for files that share the same Group ID."
+          description={
+            <div className="flex items-center justify-between">
+              <span>Compact suggestions for files that share the same Group ID.</span>
+              <Link
+                to={`/queue/group/${asset.groupId}`}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                View Full Group
+              </Link>
+            </div>
+          }
         >
           <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
             {data.relatedGroupAssets.map((related) => (

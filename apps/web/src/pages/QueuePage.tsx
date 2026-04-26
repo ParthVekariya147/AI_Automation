@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { ExternalLink, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
@@ -281,11 +282,22 @@ export function QueuePage() {
                     </select>
                   </td>
                   <td className="px-4 py-2">
-                    <input
-                      defaultValue={item.groupId || ""}
-                      onBlur={(event) => patchRow(item._id, { groupId: event.target.value || null })}
-                      className="w-24 rounded-lg border border-[#d7ddd4] px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-200"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input
+                        defaultValue={item.groupId || ""}
+                        onBlur={(event) => patchRow(item._id, { groupId: event.target.value || null })}
+                        className="w-24 rounded-lg border border-[#d7ddd4] px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-200"
+                      />
+                      {item.groupId ? (
+                        <Link
+                          to={`/queue/group/${item.groupId}`}
+                          className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                          title="View Group"
+                        >
+                          View
+                        </Link>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="px-4 py-2">
                     <select
@@ -318,17 +330,25 @@ export function QueuePage() {
                     <div className="flex justify-end items-center gap-3">
                       <Link
                         to={`/queue/${item._id}`}
-                        className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+                        className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800"
                       >
+                        <ExternalLink size={14} />
                         Open
                       </Link>
                       <button
                         type="button"
                         onClick={() => removeRow(item._id, item.originalName)}
                         disabled={deletingRowId === item._id}
-                        className="text-xs font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {deletingRowId === item._id ? "Removing" : "Remove"}
+                        {deletingRowId === item._id ? (
+                          "Removing"
+                        ) : (
+                          <>
+                            <Trash2 size={14} />
+                            Remove
+                          </>
+                        )}
                       </button>
                     </div>
                   </td>

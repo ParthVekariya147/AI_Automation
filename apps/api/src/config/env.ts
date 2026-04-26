@@ -16,6 +16,9 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional().default(""),
   GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
   GOOGLE_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/google-drive/oauth/callback"),
+  FACEBOOK_APP_ID: z.string().optional().default(""),
+  FACEBOOK_APP_SECRET: z.string().optional().default(""),
+  FACEBOOK_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/instagram/oauth/callback"),
   GOOGLE_DRIVE_SCOPES: z
     .string()
     .default(
@@ -37,5 +40,6 @@ export const env = {
     .filter(Boolean),
   googleDriveScopes: parsed.data.GOOGLE_DRIVE_SCOPES.split(/\s+/).filter(Boolean),
   geminiConfigured: Boolean(parsed.data.GEMINI_API_KEY),
-  googleConfigured: Boolean(parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET)
+  googleConfigured: Boolean(parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET),
+  facebookConfigured: Boolean(parsed.data.FACEBOOK_APP_ID && parsed.data.FACEBOOK_APP_SECRET)
 };

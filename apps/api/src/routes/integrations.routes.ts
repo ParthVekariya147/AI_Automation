@@ -9,7 +9,9 @@ import {
   listDriveConnections,
   listInstagramAccounts,
   previewDriveFile,
-  startDriveOAuth
+  startDriveOAuth,
+  startInstagramOAuth,
+  instagramOAuthCallback
 } from "../controllers/integrations.controller.js";
 import { requireAuth, requireBusinessRole } from "../middlewares/auth.js";
 
@@ -18,6 +20,8 @@ export const driveRouter = Router();
 
 // Google redirects to this URL without our JWT header, so callback must stay public.
 driveRouter.get("/oauth/callback", driveOAuthCallback);
+// Facebook redirects here, also without JWT header
+instagramRouter.get("/oauth/callback", instagramOAuthCallback);
 
 instagramRouter.use(requireAuth);
 driveRouter.use(requireAuth);
@@ -28,6 +32,7 @@ instagramRouter.get(
   listInstagramAccounts
 );
 instagramRouter.post("/connect", requireBusinessRole("admin"), connectInstagramAccount);
+instagramRouter.get("/oauth/start", requireBusinessRole("admin"), startInstagramOAuth);
 
 driveRouter.get(
   "/connections",

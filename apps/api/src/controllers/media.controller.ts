@@ -298,6 +298,10 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
   if (asset.filePath) {
     const absolutePath = path.resolve(process.cwd(), asset.filePath);
     mediaBuffer = await readFile(absolutePath);
+  } else if (asset.previewUrl?.startsWith("/uploads/")) {
+    const relativePath = asset.previewUrl.replace("/uploads/", "");
+    const absolutePath = path.resolve(process.cwd(), path.join(env.UPLOAD_DIR, relativePath));
+    mediaBuffer = await readFile(absolutePath);
   } else if (asset.previewUrl?.startsWith("http")) {
     const remote = await fetch(asset.previewUrl);
     if (!remote.ok) {
@@ -347,9 +351,8 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
   res.json({
     success: true,
     data: {
-      mediaAssetId: asset.id,
-      aiCaption: generated.caption,
-      hashtags: generated.hashtags
+      asset,
+      caption: generated.caption
     }
   });
 });
