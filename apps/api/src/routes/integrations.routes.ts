@@ -6,6 +6,7 @@ import {
   connectInstagramAccount,
   disconnectDrive,
   driveOAuthCallback,
+  getDriveFolderDetail,
   listDriveConnections,
   listInstagramAccounts,
   previewDriveFile,
@@ -44,4 +45,5 @@ driveRouter.post("/disconnect", requireBusinessRole("admin"), disconnectDrive);
 driveRouter.get("/oauth/start", requireBusinessRole("admin"), startDriveOAuth);
 driveRouter.get("/preview", requireBusinessRole("admin"), previewDriveFile);
 driveRouter.get("/folders", requireBusinessRole("admin"), browseDriveFolders);
+driveRouter.get("/folders/:id", requireBusinessRole("admin"), getDriveFolderDetail);
 driveRouter.get("/files", requireBusinessRole("admin"), browseDriveFiles);

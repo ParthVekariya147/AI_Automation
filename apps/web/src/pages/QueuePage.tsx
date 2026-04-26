@@ -34,7 +34,7 @@ export function QueuePage() {
     const needle = search.toLowerCase().trim();
     if (!needle) return items;
     return items.filter((item) =>
-      [item.originalName, item.driveFileId, item.groupId, item.aiCaption]
+      [item.originalName, item.driveFileId, item.groupId, item.aiCaption, item.folderName]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -213,6 +213,7 @@ export function QueuePage() {
                   />
                 </th>
                 <th className="px-4 py-3 border-b border-[#d7ddd4]">Media</th>
+                <th className="px-4 py-3 border-b border-[#d7ddd4]">Folder</th>
                 <th className="px-4 py-3 border-b border-[#d7ddd4]">Status</th>
                 <th className="px-4 py-3 border-b border-[#d7ddd4]">Group ID</th>
                 <th className="px-4 py-3 border-b border-[#d7ddd4]">Post Type</th>
@@ -264,6 +265,13 @@ export function QueuePage() {
                           {item.mediaType}
                         </p>
                       </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2">
+                    <div className="min-w-0 max-w-[120px]">
+                      <p className="truncate text-xs font-medium text-slate-600" title={item.folderName || "No folder"}>
+                        {item.folderName || "—"}
+                      </p>
                     </div>
                   </td>
                   <td className="px-4 py-2">

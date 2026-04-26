@@ -8,6 +8,7 @@ import {
   createGoogleOAuthClient,
   ensureDriveThumbnailCached,
   fetchGoogleProfile,
+  getDriveFolder,
   listDriveFiles,
   listRelevantDriveFolders,
   signGoogleDriveState,
@@ -502,9 +503,40 @@ export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: R
   res.json({ success: true, data: folders });
 });
 
+export const getDriveFolderDetail = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const businessId = req.query.businessId?.toString();
+  const folderIdParam = req.params.id;
+  const folderId = Array.isArray(folderIdParam) ? folderIdParam[0] : folderIdParam;
+
+  if (!businessId) {
+    throw new ApiError(400, "businessId is required");
+  }
+
+  if (!folderId) {
+    throw new ApiError(400, "folderId is required");
+  }
+
+  const connection = await findActiveDriveConnection(businessId);
+
+  if (!connection) {
+    throw new ApiError(
+      400,
+      "Google Drive is not fully connected for this business."
+    );
+  }
+
+  const folder = await getDriveFolder(connection.id, folderId);
+  res.json({ success: true, data: folder });
+});
+
 export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const businessId = req.query.businessId?.toString();
   const folderId = req.query.folderId?.toString();
+  const pageToken = req.query.pageToken?.toString();
+  const parsedPageSize = Number(req.query.pageSize);
+  const pageSize = Number.isFinite(parsedPageSize) && parsedPageSize > 0
+    ? Math.min(1000, Math.floor(parsedPageSize))
+    : 100;
 
   if (!businessId) {
     throw new ApiError(400, "businessId is required");
@@ -519,19 +551,31 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
     );
   }
 
-  let files = await listDriveFiles(connection.id, folderId);
+  const pagedFiles = await listDriveFiles(connection.id, {
+    folderId,
+    pageToken,
+    pageSize
+  });
 
-  if (!folderId && files.length === 0) {
+  let files = pagedFiles.files;
+  let nextPageToken = pagedFiles.nextPageToken;
+
+  if (!folderId && !pageToken && files.length === 0) {
     const relevantFolders = await listRelevantDriveFolders(connection.id);
 
     if (relevantFolders.length) {
       const nestedFileLists = await Promise.all(
-        relevantFolders.map((folder) => listDriveFiles(connection.id, folder.id))
+        relevantFolders.map((folder) =>
+          listDriveFiles(connection.id, {
+            folderId: folder.id,
+            pageSize
+          })
+        )
       );
 
-      const dedupedById = new Map<string, (typeof nestedFileLists)[number][number]>();
+      const dedupedById = new Map<string, (typeof files)[number]>();
 
-      for (const list of nestedFileLists) {
+      for (const list of nestedFileLists.map((entry) => entry.files)) {
         for (const file of list) {
           if (!file.id) continue;
           if (!dedupedById.has(file.id)) {
@@ -545,6 +589,8 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
         const rightTime = new Date(right.createdTime || 0).getTime();
         return rightTime - leftTime;
       });
+
+      nextPageToken = undefined;
     }
   }
 
@@ -575,7 +621,15 @@ export const browseDriveFiles = asyncHandler(async (req: AuthedRequest, res: Res
     })
   );
 
-  res.json({ success: true, data: hydratedFiles });
+  res.json({
+    success: true,
+    data: hydratedFiles,
+    meta: {
+      pageSize,
+      nextPageToken: nextPageToken ?? null,
+      hasMore: Boolean(nextPageToken)
+    }
+  });
 });
 
 export const previewDriveFile = asyncHandler(async (req: AuthedRequest, res: Response) => {

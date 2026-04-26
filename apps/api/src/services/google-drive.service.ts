@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import jwt from "jsonwebtoken";
-import { google } from "googleapis";
+import { google, type drive_v3 } from "googleapis";
 import { env } from "../config/env.js";
 import { GoogleDriveConnectionModel } from "../models/GoogleDriveConnection.js";
 import { ApiError } from "../utils/api-error.js";
@@ -22,6 +22,11 @@ export type DriveFolderSummary = {
   webViewLink?: string | null;
   containsImages: boolean;
   containsVideos: boolean;
+};
+
+export type DriveFileListResult = {
+  files: drive_v3.Schema$File[];
+  nextPageToken?: string | null;
 };
 
 export function ensureGoogleDriveConfigured() {
@@ -237,9 +242,19 @@ export async function listRelevantDriveFolders(
   return summaries.filter((folder) => folder.containsImages || folder.containsVideos);
 }
 
-export async function listDriveFiles(connectionId: string, folderId?: string) {
+export async function listDriveFiles(
+  connectionId: string,
+  options?: {
+    folderId?: string;
+    pageToken?: string;
+    pageSize?: number;
+  }
+): Promise<DriveFileListResult> {
+  const folderId = options?.folderId;
   const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
   const drive = google.drive({ version: "v3", auth: oauth2Client });
+  const requestedPageSize = options?.pageSize ?? 100;
+  const pageSize = Math.max(1, Math.min(1000, requestedPageSize));
 
   const queryParts = [
     "trashed = false",
@@ -252,12 +267,29 @@ export async function listDriveFiles(connectionId: string, folderId?: string) {
 
   const response = await drive.files.list({
     q: queryParts.join(" and "),
+    pageToken: options?.pageToken,
+    pageSize,
     orderBy: "createdTime desc,name_natural",
     fields:
-      "files(id,name,mimeType,size,parents,thumbnailLink,webViewLink,iconLink,createdTime)"
+      "nextPageToken,files(id,name,mimeType,size,parents,thumbnailLink,webViewLink,iconLink,createdTime)"
   });
 
-  return response.data.files ?? [];
+  return {
+    files: response.data.files ?? [],
+    nextPageToken: response.data.nextPageToken
+  };
+}
+
+export async function getDriveFolder(connectionId: string, folderId: string) {
+  const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+  const drive = google.drive({ version: "v3", auth: oauth2Client });
+
+  const response = await drive.files.get({
+    fileId: folderId === "root" ? "root" : folderId,
+    fields: "id,name,webViewLink"
+  });
+
+  return response.data;
 }
 
 function sanitizeSegment(value: string) {
