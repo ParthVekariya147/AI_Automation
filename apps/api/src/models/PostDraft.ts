@@ -15,6 +15,7 @@ export interface PostDraftEntity {
   postType: PostType;
   groupId?: string;
   aiCaption?: string;
+  collaborators?: string[];
   igMediaId?: string;
   permalink?: string;
   likeCount?: number;
@@ -45,11 +46,12 @@ const postDraftSchema = new Schema<PostDraftEntity>(
     },
     postType: {
       type: String,
-      enum: ["single", "carousel", "video"],
+      enum: ["single", "carousel", "video", "reel"],
       default: "single"
     },
     groupId: { type: String, trim: true },
     aiCaption: { type: String, trim: true, default: "" },
+    collaborators: [{ type: String, trim: true }],
     igMediaId: { type: String, trim: true },
     permalink: { type: String, trim: true },
     likeCount: { type: Number, min: 0, default: 0 },

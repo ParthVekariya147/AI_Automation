@@ -6,7 +6,7 @@ export type MembershipStatus = "active" | "invited" | "disabled";
 export type MediaSource = "local" | "google_drive" | "instagram_direct";
 export type MediaType = "image" | "video";
 export type WorkflowStatus = "new" | "scheduled" | "posting" | "live" | "error";
-export type PostType = "single" | "carousel" | "video";
+export type PostType = "single" | "carousel" | "video" | "reel";
 export type PostStatus = WorkflowStatus;
 
 export interface AuthUser {

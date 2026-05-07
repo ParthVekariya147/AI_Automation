@@ -11,7 +11,7 @@ import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
 
 const statusOptions = ["new", "scheduled", "posting", "live", "error"] as const;
-const postTypeOptions = ["single", "carousel", "video"] as const;
+const postTypeOptions = ["single", "carousel", "video", "reel"] as const;
 
 export function QueuePage() {
   const queryClient = useQueryClient();

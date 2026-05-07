@@ -16,9 +16,16 @@ const envSchema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional().default(""),
   GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
   GOOGLE_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/google-drive/oauth/callback"),
+  PUBLIC_API_URL: z.string().url().optional(),
   FACEBOOK_APP_ID: z.string().optional().default(""),
   FACEBOOK_APP_SECRET: z.string().optional().default(""),
   FACEBOOK_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/instagram/oauth/callback"),
+  FACEBOOK_GRAPH_API_VERSION: z.string().default("v25.0"),
+  FACEBOOK_SCOPES: z
+    .string()
+    .default(
+      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement"
+    ),
   GOOGLE_DRIVE_SCOPES: z
     .string()
     .default(
@@ -38,6 +45,9 @@ export const env = {
   corsOrigins: parsed.data.CORS_ORIGINS.split(",")
     .map((item) => item.trim())
     .filter(Boolean),
+  facebookScopes: parsed.data.FACEBOOK_SCOPES.split(/[\s,]+/).filter(Boolean),
+  facebookGraphBaseUrl: `https://graph.facebook.com/${parsed.data.FACEBOOK_GRAPH_API_VERSION}`,
+  facebookDialogBaseUrl: `https://www.facebook.com/${parsed.data.FACEBOOK_GRAPH_API_VERSION}/dialog/oauth`,
   googleDriveScopes: parsed.data.GOOGLE_DRIVE_SCOPES.split(/\s+/).filter(Boolean),
   geminiConfigured: Boolean(parsed.data.GEMINI_API_KEY),
   googleConfigured: Boolean(parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET),

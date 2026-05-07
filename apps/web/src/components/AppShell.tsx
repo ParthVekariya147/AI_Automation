@@ -101,7 +101,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          <header className="rounded-[28px] border border-[#d7ddd4] bg-white px-5 py-5 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
+          {/* <header className="rounded-[28px] border border-[#d7ddd4] bg-white px-5 py-5 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-emerald-800/70">
@@ -123,7 +123,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
               </div>
             </div>
-          </header>
+          </header> */}
 
           <div className="mt-6">{children}</div>
         </main>

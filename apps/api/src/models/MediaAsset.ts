@@ -19,7 +19,7 @@ export interface MediaAssetEntity {
   status: "ready" | "processing" | "failed";
   workflowStatus: "new" | "scheduled" | "posting" | "live" | "error";
   groupId?: string;
-  postType: "single" | "carousel" | "video";
+  postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: Date;
   aiCaption?: string;
   igMediaId?: string;
@@ -65,7 +65,7 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
     groupId: { type: String, trim: true },
     postType: {
       type: String,
-      enum: ["single", "carousel", "video"],
+      enum: ["single", "carousel", "video", "reel"],
       default: "single"
     },
     scheduledTime: { type: Date },

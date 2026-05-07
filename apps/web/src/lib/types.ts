@@ -31,7 +31,7 @@ export interface MediaAsset {
   mediaType: "image" | "video";
   workflowStatus: "new" | "scheduled" | "posting" | "live" | "error";
   groupId?: string;
-  postType: "single" | "carousel" | "video";
+  postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: string;
   aiCaption?: string;
   igMediaId?: string;
@@ -68,9 +68,13 @@ export interface PostDraft {
   title: string;
   caption: string;
   hashtags?: string[];
+  collaborators?: string[];
   status: string;
+  postType?: "single" | "carousel" | "video" | "reel";
   scheduledFor?: string;
   smartTimingSuggestedFor?: string;
+  permalink?: string;
+  igMediaId?: string;
   createdAt: string;
   instagramAccountId?: {
     _id: string;

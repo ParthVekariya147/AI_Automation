@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
@@ -8,16 +8,18 @@ import { extractApiError } from "../lib/errors";
 import { getMediaPreviewUrl } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
+import { ArrowLeft } from "lucide-react";
 
 export function QueueGroupPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const { groupId } = useParams();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
-  
+
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  
+
   const [workflowStatus, setWorkflowStatus] = useState("new");
   const [postType, setPostType] = useState("carousel");
   const [scheduledTime, setScheduledTime] = useState<string | null>(null);
@@ -26,11 +28,12 @@ export function QueueGroupPage() {
   const { data: allItems = [], isLoading } = useQuery<MediaAsset[]>({
     queryKey: ["queue", activeBusinessId],
     queryFn: async () =>
-      (await api.get("/media", { params: { businessId: activeBusinessId } })).data.data,
-    enabled: Boolean(activeBusinessId)
+      (await api.get("/media", { params: { businessId: activeBusinessId } }))
+        .data.data,
+    enabled: Boolean(activeBusinessId),
   });
 
-  const groupItems = allItems.filter(item => item.groupId === groupId);
+  const groupItems = allItems.filter((item) => item.groupId === groupId);
 
   // Initialize form state from the first item if not yet set
   useEffect(() => {
@@ -46,32 +49,43 @@ export function QueueGroupPage() {
   async function updateGroup(payload: Record<string, unknown>) {
     if (!groupId || !activeBusinessId || !groupItems.length) return;
     setSaving(true);
-    
+
     // Update local state for immediate feedback
-    if (payload.workflowStatus !== undefined) setWorkflowStatus(payload.workflowStatus as string);
+    if (payload.workflowStatus !== undefined)
+      setWorkflowStatus(payload.workflowStatus as string);
     if (payload.postType !== undefined) setPostType(payload.postType as string);
-    if (payload.scheduledTime !== undefined) setScheduledTime(payload.scheduledTime as string | null);
-    if (payload.aiCaption !== undefined) setAiCaption(payload.aiCaption as string);
+    if (payload.scheduledTime !== undefined)
+      setScheduledTime(payload.scheduledTime as string | null);
+    if (payload.aiCaption !== undefined)
+      setAiCaption(payload.aiCaption as string);
 
     try {
       await Promise.all(
-        groupItems.map(item =>
-          api.patch(`/media/${item._id}`, { businessId: activeBusinessId, ...payload })
-        )
+        groupItems.map((item) =>
+          api.patch(`/media/${item._id}`, {
+            businessId: activeBusinessId,
+            ...payload,
+          }),
+        ),
       );
-      
+
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
-      queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
+      queryClient.invalidateQueries({
+        queryKey: ["queue-overview", activeBusinessId],
+      });
       toast({
         tone: "success",
         title: "Group updated",
-        description: "Applied changes to all items in this group."
+        description: "Applied changes to all items in this group.",
       });
     } catch (error) {
       toast({
         tone: "error",
         title: "Update failed",
-        description: extractApiError(error, "Group details could not be updated.")
+        description: extractApiError(
+          error,
+          "Group details could not be updated.",
+        ),
       });
     } finally {
       setSaving(false);
@@ -79,32 +93,43 @@ export function QueueGroupPage() {
   }
 
   async function generateCaptionWithGemini() {
-    if (!groupId || !activeBusinessId || generating || !groupItems.length) return;
+    if (!groupId || !activeBusinessId || generating || !groupItems.length)
+      return;
     setGenerating(true);
 
     try {
       // Use the first item to generate the caption context
       const representativeId = groupItems[0]._id;
-      const response = await api.post(`/media/${representativeId}/generate-caption`, {
-        businessId: activeBusinessId
-      });
-      
-      const generatedCaption = response.data?.data?.caption || response.data?.data?.asset?.aiCaption || "";
+      const response = await api.post(
+        `/media/${representativeId}/generate-caption`,
+        {
+          businessId: activeBusinessId,
+        },
+      );
+
+      const generatedCaption =
+        response.data?.data?.caption ||
+        response.data?.data?.asset?.aiCaption ||
+        "";
       setAiCaption(generatedCaption);
-      
+
       // Save it to all group items immediately
       await updateGroup({ aiCaption: generatedCaption });
-      
+
       toast({
         tone: "success",
         title: "Group Caption generated",
-        description: "Gemini created a new caption based on the first image, applied to the group."
+        description:
+          "Gemini created a new caption based on the first image, applied to the group.",
       });
     } catch (error) {
       toast({
         tone: "error",
         title: "Caption generation failed",
-        description: extractApiError(error, "Gemini could not generate the caption.")
+        description: extractApiError(
+          error,
+          "Gemini could not generate the caption.",
+        ),
       });
     } finally {
       setGenerating(false);
@@ -124,11 +149,14 @@ export function QueueGroupPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <Link to="/queue" className="text-sm font-medium text-emerald-800">
+            <ArrowLeft className="w-4 h-4" />
             Back to queue
           </Link>
         </div>
         <Panel title="Group not found">
-          <p className="text-sm text-slate-600">No media items found for Group ID: {groupId}</p>
+          <p className="text-sm text-slate-600">
+            No media items found for Group ID: {groupId}
+          </p>
         </Panel>
       </div>
     );
@@ -136,14 +164,38 @@ export function QueueGroupPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <Link to="/queue" className="text-sm font-medium text-emerald-800">
+          <Link
+            to="/queue"
+            className="flex items-center gap-2 text-sm font-medium text-emerald-800 hover:text-emerald-900"
+          >
+            <ArrowLeft className="w-4 h-4" />
             Back to queue
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-950">Group: {groupId}</h1>
-          <p className="mt-1 text-sm text-slate-500">{groupItems.length} media items in this group</p>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-950">
+            Group: {groupId}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {groupItems.length} media item{groupItems.length !== 1 ? "s" : ""} in this group
+            {postType === "carousel" ? " · Carousel container" : ""}
+          </p>
         </div>
+        <button
+          onClick={() =>
+            navigate("/posts", {
+              state: {
+                mediaIds: groupItems.map((i) => i._id),
+                postType,
+                aiCaption,
+                groupId
+              }
+            })
+          }
+          className="shrink-0 rounded-2xl bg-[#10332b] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0e2c25]"
+        >
+          Create Post Draft →
+        </button>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
@@ -187,7 +239,12 @@ export function QueueGroupPage() {
                       )}
                     </div>
                     <div className="border-t border-[#d7ddd4] bg-white p-3">
-                      <p className="truncate text-sm font-medium text-slate-900" title={item.originalName}>{item.originalName}</p>
+                      <p
+                        className="truncate text-sm font-medium text-slate-900"
+                        title={item.originalName}
+                      >
+                        {item.originalName}
+                      </p>
                       <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-slate-500">
                         {item.mediaType}
                       </p>
@@ -199,21 +256,28 @@ export function QueueGroupPage() {
           </Panel>
         </div>
 
-        <Panel title="Plan this group" description="Update metadata for all items simultaneously.">
+        <Panel
+          title="Plan this group"
+          description="Update metadata for all items simultaneously."
+        >
           <div className="space-y-4">
             <Field
               label="Status (All Items)"
               input={
                 <select
                   value={workflowStatus}
-                  onChange={(event) => updateGroup({ workflowStatus: event.target.value })}
+                  onChange={(event) =>
+                    updateGroup({ workflowStatus: event.target.value })
+                  }
                   className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                 >
-                  {["new", "scheduled", "posting", "live", "error"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
+                  {["new", "scheduled", "posting", "live", "error"].map(
+                    (value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ),
+                  )}
                 </select>
               }
             />
@@ -222,10 +286,12 @@ export function QueueGroupPage() {
               input={
                 <select
                   value={postType}
-                  onChange={(event) => updateGroup({ postType: event.target.value })}
+                  onChange={(event) =>
+                    updateGroup({ postType: event.target.value })
+                  }
                   className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
                 >
-                  {["single", "carousel", "video"].map((value) => (
+                  {["single", "carousel", "video", "reel"].map((value) => (
                     <option key={value} value={value}>
                       {value}
                     </option>
@@ -239,12 +305,18 @@ export function QueueGroupPage() {
                 <input
                   type="datetime-local"
                   value={toInputDateTime(scheduledTime)}
-                  onChange={(event) => setScheduledTime(event.target.value ? new Date(event.target.value).toISOString() : null)}
+                  onChange={(event) =>
+                    setScheduledTime(
+                      event.target.value
+                        ? new Date(event.target.value).toISOString()
+                        : null,
+                    )
+                  }
                   onBlur={(event) =>
                     updateGroup({
                       scheduledTime: event.target.value
                         ? new Date(event.target.value).toISOString()
-                        : null
+                        : null,
                     })
                   }
                   className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
@@ -276,7 +348,9 @@ export function QueueGroupPage() {
             />
 
             <div className="mt-6 rounded-2xl bg-[#f6f7f2] px-4 py-3 text-sm text-slate-600">
-              {saving ? "Saving changes to group..." : "Changes save automatically as you update each field."}
+              {saving
+                ? "Saving changes to group..."
+                : "Changes save automatically as you update each field."}
             </div>
           </div>
         </Panel>
@@ -288,7 +362,9 @@ export function QueueGroupPage() {
 function Field({ label, input }: { label: string; input: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">{label}</span>
+      <span className="mb-2 block text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
+        {label}
+      </span>
       {input}
     </label>
   );
@@ -300,6 +376,6 @@ function toInputDateTime(value?: string | null) {
   if (isNaN(date.getTime())) return "";
   const pad = (num: number) => String(num).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
+    date.getHours(),
   )}:${pad(date.getMinutes())}`;
 }

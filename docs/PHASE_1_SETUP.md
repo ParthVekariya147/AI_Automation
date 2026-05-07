@@ -117,6 +117,54 @@ Current backend env keys prepared for Drive:
 - `GOOGLE_REDIRECT_URI`
 - `GOOGLE_DRIVE_SCOPES`
 
+## Instagram OAuth Env Storage
+
+Store Meta/Instagram secrets only in:
+
+- `apps/api/.env`
+
+Do not store Meta secrets in:
+
+- `apps/web/.env`
+
+Current backend env keys prepared for Instagram OAuth:
+
+- `FACEBOOK_APP_ID`
+- `FACEBOOK_APP_SECRET`
+- `FACEBOOK_REDIRECT_URI`
+- `FACEBOOK_GRAPH_API_VERSION`
+- `FACEBOOK_SCOPES`
+
+Recommended local values:
+
+- `FACEBOOK_REDIRECT_URI=http://localhost:4000/api/instagram/oauth/callback`
+- `FACEBOOK_GRAPH_API_VERSION=v25.0`
+- `FACEBOOK_SCOPES=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement`
+
+## Meta App / API Credential Generation Steps
+
+1. Open Meta for Developers and create a new app (Business app type).
+2. Add products:
+  - Facebook Login for Business
+  - Instagram Graph API
+3. Go to App Settings -> Basic and copy:
+  - App ID -> `FACEBOOK_APP_ID`
+  - App Secret -> `FACEBOOK_APP_SECRET`
+  - do not use a generated user access token here
+4. In Facebook Login settings, add Authorized Redirect URI exactly as:
+  - `http://localhost:4000/api/instagram/oauth/callback`
+5. Add your Facebook user as a developer/tester in app roles.
+6. Ensure a Facebook Page is linked to an Instagram Professional account (Business/Creator).
+7. Restart API after editing env values.
+
+## Frontend API Base URL (Env)
+
+In `apps/web/.env`:
+
+- `VITE_API_URL=http://localhost:4000/api`
+
+If this is blank, frontend uses current host with port `4000` and `/api` path.
+
 ## Recommended Google Drive Scopes
 
 - `https://www.googleapis.com/auth/drive.file`

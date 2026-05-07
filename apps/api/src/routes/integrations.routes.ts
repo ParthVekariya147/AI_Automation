@@ -5,6 +5,7 @@ import {
   connectDrive,
   connectInstagramAccount,
   disconnectDrive,
+  disconnectInstagram,
   driveOAuthCallback,
   getDriveFolderDetail,
   listDriveConnections,
@@ -33,6 +34,7 @@ instagramRouter.get(
   listInstagramAccounts
 );
 instagramRouter.post("/connect", requireBusinessRole("admin"), connectInstagramAccount);
+instagramRouter.post("/disconnect", requireBusinessRole("admin"), disconnectInstagram);
 instagramRouter.get("/oauth/start", requireBusinessRole("admin"), startInstagramOAuth);
 
 driveRouter.get(

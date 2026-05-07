@@ -63,6 +63,19 @@ function buildIntegrationsRedirect(
   return target.toString();
 }
 
+function resolveOAuthCallbackError(error: unknown) {
+  if (error instanceof ApiError) {
+    // Strip long Graph payloads while preserving root cause text for UI/debugging.
+    return error.message.slice(0, 180);
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message.slice(0, 180);
+  }
+
+  return "oauth_callback_failed";
+}
+
 async function findActiveDriveConnection(businessId: string) {
   return GoogleDriveConnectionModel.findOne({
     businessId,
@@ -196,7 +209,8 @@ export const instagramOAuthCallback = asyncHandler(async (req: AuthedRequest, re
       return res.redirect(
         buildIntegrationsRedirect(parsedState.frontendOrigin, {
           ig_connected: "0",
-          error: "no_instagram_accounts_found"
+          error:
+            "No linked Instagram Professional account found. Easy fix: switch Instagram to Professional and link it to a Facebook Page, then reconnect."
         })
       );
     }
@@ -232,13 +246,42 @@ export const instagramOAuthCallback = asyncHandler(async (req: AuthedRequest, re
     );
   } catch (error) {
     console.error("Facebook OAuth callback failed", error);
+    const callbackError = resolveOAuthCallbackError(error);
     return res.redirect(
       buildIntegrationsRedirect(parsedState?.frontendOrigin, {
         ig_connected: "0",
-        error: "oauth_callback_failed"
+        error: callbackError
       })
     );
   }
+});
+
+export const disconnectInstagram = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const accountId = req.body.accountId || req.query.accountId?.toString();
+  const businessId = req.body.businessId || req.query.businessId?.toString();
+
+  if (!accountId || !businessId) {
+    throw new ApiError(400, "accountId and businessId are required");
+  }
+
+  await InstagramAccountModel.findOneAndUpdate(
+    { _id: accountId, businessId },
+    { isActive: false, accessToken: undefined }
+  );
+
+  await createAuditLog({
+    actorUserId: req.user.id,
+    businessId,
+    action: "instagram.disconnected",
+    entityType: "InstagramAccount",
+    entityId: accountId
+  });
+
+  res.json({ success: true });
 });
 
 export const listDriveConnections = asyncHandler(async (req: AuthedRequest, res: Response) => {

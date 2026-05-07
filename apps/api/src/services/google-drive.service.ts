@@ -229,7 +229,7 @@ export async function listRelevantDriveFolders(
         Boolean(folder.id)
       )
       .map(async (folder) => {
-        const mediaSummary = await getFolderMediaSummary(drive, folder.id, 2);
+        const mediaSummary = await getFolderMediaSummary(drive, folder.id, 3);
         return {
           id: folder.id,
           name: folder.name || "Untitled folder",
@@ -395,6 +395,48 @@ export async function ensureDriveThumbnailCached(
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   const previewBuffer = await fetchDrivePreviewBytes(accessToken, file);
   await fs.writeFile(absolutePath, previewBuffer);
+
+  return publicUrl;
+}
+
+const PUBLISH_CACHE_DIR = "publish-cache";
+
+export async function downloadDriveFileForPublish(
+  connectionId: string,
+  businessId: string,
+  driveFileId: string,
+  mimeType: string
+): Promise<string> {
+  const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+  const accessToken = oauth2Client.credentials.access_token;
+
+  if (!accessToken) {
+    throw new ApiError(400, "Google Drive access token is unavailable. Reconnect Drive from the Integrations page.");
+  }
+
+  const safeBusinessId = sanitizeSegment(businessId);
+  const safeFileId = sanitizeSegment(driveFileId);
+  const extension = getExtensionFromMimeType(mimeType);
+  const relativePath = path.join(PUBLISH_CACHE_DIR, safeBusinessId, `${safeFileId}.${extension}`);
+  const absolutePath = path.resolve(process.cwd(), env.UPLOAD_DIR, relativePath);
+  const publicUrl = `/uploads/${relativePath.split(path.sep).join("/")}`;
+
+  if (await isCacheFresh(absolutePath)) {
+    return publicUrl;
+  }
+
+  const response = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(driveFileId)}?alt=media`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+
+  if (!response.ok) {
+    throw new ApiError(400, `Could not download Drive file for publishing: ${await response.text()}`);
+  }
+
+  const bytes = await response.arrayBuffer();
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, Buffer.from(bytes));
 
   return publicUrl;
 }

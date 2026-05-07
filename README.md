@@ -41,6 +41,43 @@ npm run dev:all
 http://localhost:5173
 ```
 
+## Instagram OAuth Setup (Meta)
+
+The app already includes Instagram OAuth endpoints:
+
+- `GET /api/instagram/oauth/start`
+- `GET /api/instagram/oauth/callback`
+
+Add these keys in `apps/api/.env`:
+
+```bash
+FACEBOOK_APP_ID=your_meta_app_id
+FACEBOOK_APP_SECRET=your_meta_app_secret
+FACEBOOK_REDIRECT_URI=http://localhost:4000/api/instagram/oauth/callback
+FACEBOOK_GRAPH_API_VERSION=v25.0
+FACEBOOK_SCOPES=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement
+```
+
+How to generate Meta credentials:
+
+1. Go to Meta for Developers and create a new app (Business type).
+2. Add `Facebook Login for Business` and `Instagram Graph API` products.
+3. Open App Settings -> Basic and copy `App ID` and `App Secret`.
+   Do not paste a user access token in `FACEBOOK_APP_SECRET`; it must be the app secret from dashboard.
+4. In Facebook Login settings, add this redirect URI exactly:
+	`http://localhost:4000/api/instagram/oauth/callback`
+5. In app roles, add yourself as a tester/developer and connect a Facebook Page with an Instagram Professional account.
+
+## Frontend -> API Connection (Env)
+
+Frontend API URL is controlled by `apps/web/.env`:
+
+```bash
+VITE_API_URL=http://localhost:4000/api
+```
+
+If `VITE_API_URL` is empty, frontend auto-targets current host on port `4000`.
+
 For other devices on the same Wi-Fi:
 
 - the Vite dev server now exposes a network URL

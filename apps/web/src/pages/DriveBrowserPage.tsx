@@ -35,8 +35,8 @@ export function DriveBrowserPage() {
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
   const [searchParams] = useSearchParams();
   const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>("root");
-  const [selectedFolderName, setSelectedFolderName] = useState<string>("My Drive");
-  const [actionError, setActionError] = useState("");
+  const [selectedFolderName, setSelectedFolderName] = useState<string>("");
+  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [folderTree, setFolderTree] = useState<Record<string, DriveFolder[]>>({});
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set(["root"]));
   const [files, setFiles] = useState<DriveFile[]>([]);
@@ -44,7 +44,7 @@ export function DriveBrowserPage() {
   const [isFetchingData, setIsFetchingData] = useState(false);
   const [hasFetchedData, setHasFetchedData] = useState(false);
   const [lastFetchedFolderId, setLastFetchedFolderId] = useState<string | undefined>();
-  const [lastFetchedFolderName, setLastFetchedFolderName] = useState<string>("My Drive");
+  const [lastFetchedFolderName, setLastFetchedFolderName] = useState<string>("");
   const [filesNextPageToken, setFilesNextPageToken] = useState<string | null>(null);
   const [isFetchingMoreFiles, setIsFetchingMoreFiles] = useState(false);
   const [folderSearch, setFolderSearch] = useState("");
@@ -52,7 +52,6 @@ export function DriveBrowserPage() {
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "video">("all");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [viewMode, setViewMode] = useState<MediaViewMode>("large");
-  const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [importingFileIds, setImportingFileIds] = useState<Set<string>>(new Set());
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
@@ -84,21 +83,20 @@ export function DriveBrowserPage() {
     [importedAssets]
   );
 
-  const { data: folderDetail, isLoading: folderLoading } = useQuery<{ id: string; name: string }>({
+  const folderDetail = useQuery({
     queryKey: ["drive-folder-detail", activeBusinessId, selectedFolderId],
     queryFn: async () =>
-      (await api.get(`/google-drive/folders/${selectedFolderId || "root"}`, { params: { businessId: activeBusinessId } }))
-        .data.data,
-    enabled: Boolean(activeBusinessId && connectedDrive)
+      (await api.get(`/google-drive/folders/${selectedFolderId || "root"}`, { params: { businessId: activeBusinessId } })).data.data,
+    enabled: Boolean(activeBusinessId && selectedFolderId),
   });
 
   useEffect(() => {
-    if (folderDetail?.name && folderDetail.name !== "root") {
-      setSelectedFolderName(folderDetail.name);
-    } else if (folderDetail?.name === "root") {
+    if (folderDetail.data?.name) {
+      setSelectedFolderName(folderDetail.data.name);
+    } else if (selectedFolderId === "root") {
       setSelectedFolderName("My Drive");
     }
-  }, [folderDetail]);
+  }, [folderDetail.data, selectedFolderId]);
 
   const oauthStatus = searchParams.get("connected");
   const oauthError = searchParams.get("error");
@@ -106,7 +104,7 @@ export function DriveBrowserPage() {
     if (oauthStatus === "1") {
       return {
         tone: "success" as const,
-        text: "Google Drive connected. Task 1 is complete, and the app is ready to fetch and display files."
+        text: "Google Drive connected."
       };
     }
 
@@ -156,13 +154,12 @@ export function DriveBrowserPage() {
 
   useEffect(() => {
     setSelectedFolderId("root");
-    setSelectedFolderName("My Drive");
     setFolderTree({});
     setFiles([]);
     setFetchError("");
     setHasFetchedData(false);
     setLastFetchedFolderId(undefined);
-    setLastFetchedFolderName("My Drive");
+    setLastFetchedFolderName("");
     setFilesNextPageToken(null);
     setIsFetchingMoreFiles(false);
     setFolderSearch("");
@@ -181,7 +178,7 @@ export function DriveBrowserPage() {
     setFetchError("");
     setHasFetchedData(false);
     setLastFetchedFolderId(undefined);
-    setLastFetchedFolderName("My Drive");
+    setLastFetchedFolderName("");
     setFilesNextPageToken(null);
     setIsFetchingMoreFiles(false);
     setFolderSearch("");
@@ -259,7 +256,7 @@ export function DriveBrowserPage() {
       setActionError(
         extractApiError(
           error,
-          "Drive connection could not start. Check Google env values and OAuth redirect settings."
+          "Drive connection could not start."
         )
       );
     }
@@ -274,7 +271,6 @@ export function DriveBrowserPage() {
     }
 
     try {
-      setActionError("");
       setFetchError("");
 
       if (append) {
@@ -351,7 +347,6 @@ export function DriveBrowserPage() {
     } else {
       newExpanded.add(folder.id);
       
-      // Fetch subfolders if not already in tree
       if (!folderTree[folder.id]) {
         try {
           const response = await api.get("/google-drive/folders", {
@@ -372,31 +367,25 @@ export function DriveBrowserPage() {
     }
 
     setExpandedFolderIds(newExpanded);
-    
-    // Also select the folder to show its files
     setSelectedFolderId(folder.id);
-    setSelectedFolderName(folder.name);
   }
 
-  async function disconnectGoogleDrive() {
+  async function disconnectDrive() {
     if (!activeBusinessId) return;
-
     try {
-      setActionError("");
       await api.post("/google-drive/disconnect", { businessId: activeBusinessId });
+      queryClient.invalidateQueries({ queryKey: ["drive-connections", activeBusinessId] });
       setSelectedFolderId("root");
       setSelectedFolderName("My Drive");
       setFolderTree({});
       setFiles([]);
-      setFetchError("");
       setHasFetchedData(false);
       setLastFetchedFolderId(undefined);
-      setLastFetchedFolderName("My Drive");
+      setLastFetchedFolderName("");
       setFilesNextPageToken(null);
       setIsFetchingMoreFiles(false);
-      queryClient.invalidateQueries({ queryKey: ["drive-connections", activeBusinessId] });
     } catch (error) {
-      setActionError(extractApiError(error, "Drive could not be disconnected."));
+      toast({ tone: "error", title: "Error", description: extractApiError(error, "Disconnect failed.") });
     }
   }
 
@@ -567,27 +556,36 @@ export function DriveBrowserPage() {
         </div>
       ) : null}
 
-      <Panel
-        title="Task 1: Connect Drive and fetch data"
-        description="This page follows a single-workspace flow: connect Google Drive, check status, fetch folders/files, and display media for the signed-in admin."
-      >
-        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-3xl bg-[#f6f7f2] p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Connection status</p>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <StatusPill state={connectionState} />
-              <p className="text-sm text-slate-700">
-                {connectionsLoading
-                  ? "Checking Drive status..."
-                  : connectionState === "connected"
-                    ? `${connectedDrive?.accountEmail || "Drive account"} is connected`
-                    : connectionState === "disconnected"
-                      ? "Drive was connected earlier but is now disconnected"
-                      : "Drive is not connected yet"}
-              </p>
-            </div>
+      <div className="grid gap-6 lg:grid-cols-4">
+        <MetricCard
+          label="Media Source"
+          value={connectedDrive ? "Google Drive" : "Not Connected"}
+          subValue={connectedDrive?.accountEmail}
+        />
+        <MetricCard
+          label="Folders"
+          value={connectedDrive && hasFetchedData ? (Object.keys(folderTree).length) : 0}
+          subValue="Total folders found"
+        />
+        <MetricCard
+          label="Files found"
+          value={hasFetchedData ? mediaFiles.length : 0}
+          subValue={lastFetchedFolderName ? `From ${lastFetchedFolderName}` : "Select a folder to fetch"}
+        />
+        <MetricCard
+          label="Imported"
+          value={importedAssets.length}
+          subValue="Items in Content Queue"
+        />
+      </div>
 
-            <div className="mt-5 flex flex-wrap gap-3">
+      <div className="grid gap-6 xl:grid-cols-[340px_1fr]">
+        <div className="space-y-6">
+          <Panel
+            title="Media Source"
+            description="Connect your workspace Google Drive and explore the folder structure to find content."
+          >
+            <div className="flex flex-wrap gap-3">
               <button
                 onClick={connectGoogleDrive}
                 className="rounded-full bg-[#10332b] px-5 py-3 text-sm font-medium text-white"
@@ -595,114 +593,86 @@ export function DriveBrowserPage() {
                 {connectionState === "connected" ? "Reconnect Drive" : "Connect Drive"}
               </button>
               <button
-                onClick={() => {
-                  void fetchDriveData();
-                }}
-                disabled={connectionState !== "connected" || isFetchingData || isFetchingMoreFiles}
-                className="rounded-full border border-[#10332b] px-5 py-3 text-sm font-medium text-[#10332b] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isFetchingData || isFetchingMoreFiles
-                  ? "Fetching..."
-                  : hasFetchedData
-                    ? "Fetch Data Again"
-                    : "Fetch Data"}
-              </button>
-              <button
-                onClick={disconnectGoogleDrive}
+                onClick={disconnectDrive}
                 disabled={connectionState !== "connected"}
                 className="rounded-full border border-[#d7ddd4] px-5 py-3 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Disconnect
               </button>
             </div>
-
-            {actionError ? <p className="mt-3 text-sm text-red-600">{actionError}</p> : null}
-            {fetchError ? <p className="mt-3 text-sm text-red-600">{fetchError}</p> : null}
-
-            <div className="mt-6 space-y-2 text-sm text-slate-700">
-              <p>1. Click `Connect Drive`</p>
-              <p>2. Approve Google access</p>
-              <p>3. Data auto-loads after connection, or click `Fetch Data` any time to refresh</p>
-              <p>4. Preview and import the file you want</p>
-            </div>
-          </div>
-
-          <div className="rounded-3xl border border-[#d7ddd4] bg-[#fbfbf8] p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Current result</p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-              <MetricCard label="Root Folders" value={connectedDrive && hasFetchedData ? (folderTree["root"]?.length || 0) : 0} />
-              <MetricCard label="Media Files" value={connectedDrive && hasFetchedData ? mediaFiles.length : 0} />
-              <MetricCard label="Imported" value={importedAssets.length} note="Count from DB queue" />
-            </div>
-            <p className="mt-4 text-sm text-slate-600">
-              {hasFetchedData
-                ? `Loaded from ${lastFetchedFolderName}.`
-                : "No Drive data loaded yet. Use Fetch Data when you are ready."}
-            </p>
-          </div>
-        </div>
-      </Panel>
-
-      <div className="grid gap-6 xl:grid-cols-[280px_1fr]">
-        <Panel
-          title="Folders"
-          description="Only folders that contain images or videos within two levels are shown here."
-        >
-          {!connectedDrive ? (
-            <SimpleEmptyState text="Connect Drive first to load folders." />
-          ) : !hasFetchedData ? (
-            <SimpleEmptyState text="Click Fetch Data to load the root folder." />
-          ) : (
-            <div className="space-y-1">
-              <input
-                value={folderSearch}
-                onChange={(event) => setFolderSearch(event.target.value)}
-                placeholder="Filter folders"
-                className="mb-2 w-full rounded-2xl border border-[#d7ddd4] px-4 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
-              />
-              <button
-                onClick={() => {
-                  setSelectedFolderId("root");
-                  setSelectedFolderName("My Drive");
-                }}
-                className={`w-full rounded-xl px-4 py-2 text-left text-sm font-medium transition ${
-                  selectedFolderId === "root"
-                    ? "bg-emerald-50 text-emerald-900"
-                    : "bg-transparent text-slate-700 hover:bg-slate-100"
-                }`}
-              >
-                📁 My Drive
-              </button>
-              
-              <div className="mt-2 space-y-1">
-                {(folderTree["root"] || [])
-                  .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
-                  .map((folder) => (
-                    <FolderNode
-                      key={folder.id}
-                      folder={folder}
-                      folderTree={folderTree}
-                      expandedFolderIds={expandedFolderIds}
-                      selectedFolderId={selectedFolderId}
-                      onToggle={toggleFolder}
-                      onSelect={(f) => {
-                        setSelectedFolderId(f.id);
-                        setSelectedFolderName(f.name);
-                      }}
-                    />
-                  ))}
+            {connectedDrive && (
+              <div className="mt-6">
+                <button
+                  onClick={() => {
+                    void fetchDriveData();
+                  }}
+                  disabled={connectionState !== "connected" || isFetchingData || isFetchingMoreFiles}
+                  className="w-full rounded-xl border border-[#10332b] px-5 py-3 text-sm font-medium text-[#10332b] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isFetchingData || isFetchingMoreFiles
+                    ? "Fetching..."
+                    : "Refresh Drive Data"}
+                </button>
               </div>
+            )}
+          </Panel>
 
-              {hasFetchedData && !(folderTree["root"]?.length) ? (
-                <SimpleEmptyState text="No matching media folders were found." />
-              ) : null}
-            </div>
-          )}
-        </Panel>
+          <Panel
+            title="Folders"
+            description="Explore your Drive folders. We only show folders that contain images or videos."
+          >
+            {!connectedDrive ? (
+              <SimpleEmptyState text="Connect Drive first to load folders." />
+            ) : !hasFetchedData ? (
+              <SimpleEmptyState text="Click Refresh to load the root folder." />
+            ) : (
+              <div className="space-y-1">
+                <input
+                  value={folderSearch}
+                  onChange={(event) => setFolderSearch(event.target.value)}
+                  placeholder="Filter folders"
+                  className="mb-2 w-full rounded-2xl border border-[#d7ddd4] px-4 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
+                />
+                <button
+                  onClick={() => {
+                    setSelectedFolderId("root");
+                    setSelectedFolderName("My Drive");
+                  }}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition-colors ${
+                    selectedFolderId === "root" || !selectedFolderId
+                      ? "bg-emerald-100 text-emerald-900"
+                      : "text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  📁 My Drive
+                </button>
+                
+                <div className="mt-2 space-y-1">
+                  {(folderTree["root"] || [])
+                    .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
+                    .map((folder) => (
+                      <FolderNode
+                        key={folder.id}
+                        folder={folder}
+                        folderTree={folderTree}
+                        expandedFolderIds={expandedFolderIds}
+                        selectedFolderId={selectedFolderId}
+                        onToggle={toggleFolder}
+                        onSelect={(f) => {
+                          setSelectedFolderId(f.id);
+                          setSelectedFolderName(f.name);
+                        }}
+                      />
+                    ))}
+                </div>
+              </div>
+            )}
+          </Panel>
+        </div>
 
         <Panel
-          title={selectedFolderId === "root" || !selectedFolderId ? "My Drive" : `Fetched media from ${selectedFolderName}`}
-          description="The selected folder shows only its real folder data. Use filters to switch between images and videos."
+          title={selectedFolderName ? `Media in ${selectedFolderName}` : "Select a folder"}
+          description={hasFetchedData ? `Loaded ${mediaFiles.length} items from Drive.` : "Fetch content to see image and video previews."}
         >
           {!connectedDrive ? (
             <SimpleEmptyState text="No Drive data is being shown because your workspace is not connected." />
@@ -711,16 +681,14 @@ export function DriveBrowserPage() {
           ) : !hasFetchedData ? (
             <SimpleEmptyState text="Click Fetch Data to load image and video files." />
           ) : !mediaFiles.length ? (
-            <SimpleEmptyState 
-              text={selectedFolderId === "root" ? "No image or video files were found in your Google Drive." : "No image or video files were found in this folder. Try checking subfolders in the sidebar."} 
-            />
+            <SimpleEmptyState text="No image or video files were found in this folder." />
           ) : (
             <div className="space-y-4">
               <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto]">
                 <input
                   value={fileSearch}
                   onChange={(event) => setFileSearch(event.target.value)}
-                  placeholder="Search image or video files"
+                  placeholder="Search files..."
                   className="rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none ring-emerald-200 focus:ring-2"
                 />
                 <select
@@ -749,10 +717,10 @@ export function DriveBrowserPage() {
                   onChange={(event) => setViewMode(event.target.value as MediaViewMode)}
                   className="rounded-2xl border border-[#d7ddd4] bg-white px-4 py-3 text-sm text-slate-800"
                 >
-                  <option value="large">Large view</option>
-                  <option value="medium">Medium view</option>
-                  <option value="small">Small view</option>
-                  <option value="detailed">Detailed view</option>
+                  <option value="large">Large</option>
+                  <option value="medium">Medium</option>
+                  <option value="small">Small</option>
+                  <option value="detailed">Detailed</option>
                 </select>
               </div>
 
