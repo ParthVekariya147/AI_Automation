@@ -11,6 +11,7 @@ import {
   getDriveFolder,
   listDriveFiles,
   listRelevantDriveFolders,
+  listSharedDriveFolders,
   signGoogleDriveState,
   verifyGoogleDriveState
 } from "../services/google-drive.service.js";
@@ -527,7 +528,7 @@ export const driveOAuthCallback = asyncHandler(async (req: AuthedRequest, res: R
 
 export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const businessId = req.query.businessId?.toString();
-  const parentFolderId = req.query.parentFolderId?.toString();
+  const parentId = req.query.parentId?.toString();
 
   if (!businessId) {
     throw new ApiError(400, "businessId is required");
@@ -542,8 +543,17 @@ export const browseDriveFolders = asyncHandler(async (req: AuthedRequest, res: R
     );
   }
 
-  const folders = await listRelevantDriveFolders(connection.id, parentFolderId);
-  res.json({ success: true, data: folders });
+  if (parentId) {
+    const folders = await listRelevantDriveFolders(connection.id, parentId);
+    return res.json({ success: true, data: folders });
+  }
+
+  const [myDrive, sharedWithMe] = await Promise.all([
+    listRelevantDriveFolders(connection.id, undefined),
+    listSharedDriveFolders(connection.id)
+  ]);
+
+  return res.json({ success: true, data: { myDrive, sharedWithMe } });
 });
 
 export const getDriveFolderDetail = asyncHandler(async (req: AuthedRequest, res: Response) => {

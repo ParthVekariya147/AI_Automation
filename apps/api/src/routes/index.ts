@@ -5,6 +5,7 @@ import { businessRouter } from "./business.routes.js";
 import { driveRouter, instagramRouter } from "./integrations.routes.js";
 import { mediaRouter } from "./media.routes.js";
 import { postRouter } from "./post.routes.js";
+import { reportRouter } from "./report.routes.js";
 
 export const apiRouter = Router();
 
@@ -19,3 +20,4 @@ apiRouter.use("/google-drive", driveRouter);
 apiRouter.use("/media", mediaRouter);
 apiRouter.use("/posts", postRouter);
 apiRouter.use("/analytics", analyticsRouter);
+apiRouter.use("/reports", reportRouter);

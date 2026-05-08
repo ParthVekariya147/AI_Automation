@@ -54,11 +54,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     setApiToken(session.token);
     const response = await api.get("/auth/me");
+    const savedBusinessId = localStorage.getItem("automation.activeBusinessId");
+    const memberships = response.data.data.memberships;
+    const validSaved = savedBusinessId && memberships.some(
+      (m: { businessId: { _id: string } }) => m.businessId._id === savedBusinessId
+    );
     set({
       token: session.token,
       user: response.data.data.user,
-      memberships: response.data.data.memberships,
-      activeBusinessId: response.data.data.memberships[0]?.businessId?._id
+      memberships,
+      activeBusinessId: validSaved ? savedBusinessId : memberships[0]?.businessId?._id
     });
   }
 }));

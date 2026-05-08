@@ -50,6 +50,7 @@ export interface DriveFolder {
   webViewLink?: string | null;
   containsImages: boolean;
   containsVideos: boolean;
+  owner?: string;
 }
 
 export interface DriveFile {
@@ -86,5 +87,8 @@ export interface PostDraft {
     originalName: string;
     mediaType: "image" | "video";
     source: "local" | "google_drive" | "instagram_direct";
+    publicUrl?: string;
+    previewUrl?: string;
+    driveThumbnailLink?: string;
   }>;
 }

@@ -7,6 +7,9 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "bash start.sh",
+    "tunnel": "bash tunnel.sh",
+    "tunnel:dev": "bash tunnel.sh --restart",
     "dev": "npm run dev --workspace api",
     "dev:all": "concurrently \"npm run dev --workspace api\" \"npm run dev --workspace web\"",
     "dev:api": "npm run dev --workspace api",

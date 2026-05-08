@@ -9,6 +9,7 @@ import {
   formatSchedule,
   getMediaOpenUrl,
   getMediaPreviewUrl,
+  toInputDateTime,
 } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
@@ -258,7 +259,7 @@ export function QueueDetailPage() {
                   }
                   className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
                 >
-                  {["single", "carousel", "video"].map((value) => (
+                  {["single", "carousel", "video", "reel"].map((value) => (
                     <option key={value} value={value}>
                       {value}
                     </option>
@@ -442,11 +443,3 @@ function MetaCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function toInputDateTime(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  const pad = (num: number) => String(num).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours(),
-  )}:${pad(date.getMinutes())}`;
-}

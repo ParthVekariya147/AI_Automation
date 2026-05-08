@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   deleteMediaAsset,
+  ensureThumbnail,
   generateMediaCaption,
   getMediaDetail,
   importFromDrive,
@@ -23,6 +24,7 @@ mediaRouter.post(
 );
 mediaRouter.post("/import-from-drive", requireBusinessRole("admin"), importFromDrive);
 mediaRouter.post("/:id/generate-caption", requireBusinessRole("admin"), generateMediaCaption);
+mediaRouter.post("/:id/ensure-thumbnail", requireBusinessRole("admin"), ensureThumbnail);
 mediaRouter.get("/:id", requireBusinessRole("admin"), getMediaDetail);
 mediaRouter.patch("/:id", requireBusinessRole("admin"), updateMediaWorkflow);
 mediaRouter.delete("/:id", requireBusinessRole("admin"), deleteMediaAsset);

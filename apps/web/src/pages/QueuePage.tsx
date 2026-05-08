@@ -6,7 +6,7 @@ import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
 import { extractApiError } from "../lib/errors";
-import { getMediaPreviewUrl } from "../lib/media";
+import { getMediaPreviewUrl, toInputDateTime } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
 
@@ -22,6 +22,8 @@ export function QueuePage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkGroupId, setBulkGroupId] = useState("");
   const [isApplyingBulk, setIsApplyingBulk] = useState(false);
+  const [confirmDeleteRowId, setConfirmDeleteRowId] = useState<string | null>(null);
+  const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
 
   const { data: items = [] } = useQuery<MediaAsset[]>({
     queryKey: ["queue", activeBusinessId],
@@ -57,14 +59,12 @@ export function QueuePage() {
     }
   }
 
-  async function removeRow(id: string, originalName: string) {
+  async function removeRow(id: string) {
     if (!activeBusinessId || deletingRowId === id) return;
-
-    const shouldRemove = window.confirm(`Remove ${originalName} from Content Queue?`);
-    if (!shouldRemove) return;
 
     try {
       setDeletingRowId(id);
+      setConfirmDeleteRowId(null);
       await api.delete(`/media/${id}`, { params: { businessId: activeBusinessId } });
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
@@ -128,9 +128,7 @@ export function QueuePage() {
 
   const applyBulkRemove = async () => {
     if (!activeBusinessId || !selectedIds.length) return;
-    const confirm = window.confirm(`Remove ${selectedIds.length} items from Queue?`);
-    if (!confirm) return;
-
+    setConfirmBulkRemove(false);
     setIsApplyingBulk(true);
     let successCount = 0;
     try {
@@ -153,9 +151,15 @@ export function QueuePage() {
 
   return (
     <div className="space-y-6">
+      {/* Page heading */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Content Queue</h1>
+        <p className="mt-0.5 text-sm text-slate-500">Manage imported media, assign groups, set post types, and schedule</p>
+      </div>
+
       <Panel
-        title="Content Queue"
-        description="Each row is one imported media file. The layout is compact so you can scan media previews and workflow status faster."
+        title="All items"
+        description="Each row is one imported media file. Edit status, group, post type, and scheduled time inline."
       >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <input
@@ -189,13 +193,32 @@ export function QueuePage() {
                  Apply Group
               </button>
               <div className="hidden sm:block h-5 w-px bg-emerald-200 mx-1" />
-              <button 
-                 onClick={applyBulkRemove}
-                 disabled={isApplyingBulk}
-                 className="rounded-lg border border-red-200 text-red-700 bg-white px-4 py-1.5 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
-              >
-                 Remove Selected
-              </button>
+              {!confirmBulkRemove ? (
+                <button
+                  onClick={() => setConfirmBulkRemove(true)}
+                  disabled={isApplyingBulk}
+                  className="rounded-lg border border-red-200 text-red-700 bg-white px-4 py-1.5 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                >
+                  Remove Selected
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-red-700">Remove {selectedIds.length}?</span>
+                  <button
+                    onClick={applyBulkRemove}
+                    disabled={isApplyingBulk}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    onClick={() => setConfirmBulkRemove(false)}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -343,21 +366,42 @@ export function QueuePage() {
                         <ExternalLink size={14} />
                         Open
                       </Link>
-                      <button
-                        type="button"
-                        onClick={() => removeRow(item._id, item.originalName)}
-                        disabled={deletingRowId === item._id}
-                        className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {deletingRowId === item._id ? (
-                          "Removing"
-                        ) : (
-                          <>
-                            <Trash2 size={14} />
-                            Remove
-                          </>
-                        )}
-                      </button>
+                      {confirmDeleteRowId === item._id ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-medium text-red-700">Sure?</span>
+                          <button
+                            type="button"
+                            onClick={() => removeRow(item._id)}
+                            disabled={deletingRowId === item._id}
+                            className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            {deletingRowId === item._id ? "…" : "Yes"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteRowId(null)}
+                            className="rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteRowId(item._id)}
+                          disabled={deletingRowId === item._id}
+                          className="flex items-center gap-1.5 text-xs font-semibold text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {deletingRowId === item._id ? (
+                            "Removing…"
+                          ) : (
+                            <>
+                              <Trash2 size={14} />
+                              Remove
+                            </>
+                          )}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -399,11 +443,3 @@ function Tip({ title, body }: { title: string; body: string }) {
   );
 }
 
-function toInputDateTime(value?: string) {
-  if (!value) return "";
-  const date = new Date(value);
-  const pad = (num: number) => String(num).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
-}

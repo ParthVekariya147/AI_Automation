@@ -54,6 +54,7 @@ export function DriveBrowserPage() {
   const [viewMode, setViewMode] = useState<MediaViewMode>("large");
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [importingFileIds, setImportingFileIds] = useState<Set<string>>(new Set());
+  const [actionError, setActionError] = useState("");
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
   const { data: importedAssets = [] } = useQuery<MediaAsset[]>({
@@ -305,21 +306,30 @@ export function DriveBrowserPage() {
         return;
       }
 
-      const [foldersResponse, filesResponse] = await Promise.all([
-        api.get("/google-drive/folders", {
-          params: { businessId: activeBusinessId, parentFolderId: selectedFolderId }
-        }),
-        api.get<DriveFilesResponse>("/google-drive/files", {
-          params: fileParams
-        })
-      ]);
+      if (!hasFetchedData) {
+        // First load: fetch root tree (My Drive + Shared) and files together
+        const [foldersResponse, filesResponse] = await Promise.all([
+          api.get("/google-drive/folders", { params: { businessId: activeBusinessId } }),
+          api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams })
+        ]);
 
-      setFolderTree((prev) => ({
-        ...prev,
-        [selectedFolderId || "root"]: foldersResponse.data.data
-      }));
-      setFiles(filesResponse.data.data || []);
-      setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+        const folderData = foldersResponse.data.data as { myDrive: DriveFolder[]; sharedWithMe: DriveFolder[] };
+        setFolderTree((prev) => ({
+          ...prev,
+          root: folderData.myDrive ?? [],
+          shared: folderData.sharedWithMe ?? []
+        }));
+        setFiles(filesResponse.data.data || []);
+        setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+      } else {
+        // Subsequent folder changes: only reload files (tree already loaded)
+        const filesResponse = await api.get<DriveFilesResponse>("/google-drive/files", {
+          params: fileParams
+        });
+        setFiles(filesResponse.data.data || []);
+        setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+      }
+
       setHasFetchedData(true);
       setLastFetchedFolderId(selectedFolderId);
       setLastFetchedFolderName(selectedFolderName);
@@ -346,15 +356,15 @@ export function DriveBrowserPage() {
       newExpanded.delete(folder.id);
     } else {
       newExpanded.add(folder.id);
-      
+
       if (!folderTree[folder.id]) {
         try {
           const response = await api.get("/google-drive/folders", {
-            params: { businessId: activeBusinessId, parentFolderId: folder.id }
+            params: { businessId: activeBusinessId, parentId: folder.id }
           });
           setFolderTree((prev) => ({
             ...prev,
-            [folder.id]: response.data.data
+            [folder.id]: response.data.data as DriveFolder[]
           }));
         } catch (error) {
           toast({
@@ -545,18 +555,38 @@ export function DriveBrowserPage() {
 
   return (
     <div className="space-y-6">
+      {/* Page heading */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Drive Browser</h1>
+          <p className="mt-0.5 text-sm text-slate-500">Browse Google Drive and import media into the content queue</p>
+        </div>
+        <StatusPill state={connectionState} />
+      </div>
+
+      {/* OAuth feedback */}
       {oauthFeedback ? (
         <div
-          className={`rounded-2xl px-4 py-3 text-sm ${oauthFeedback.tone === "success"
-              ? "bg-emerald-50 text-emerald-900"
+          className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm ${oauthFeedback.tone === "success"
+              ? "bg-emerald-50 text-emerald-800"
               : "bg-red-50 text-red-700"
             }`}
         >
+          {oauthFeedback.tone === "success" ? (
+            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4 shrink-0 text-emerald-500">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4 shrink-0 text-red-500">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+            </svg>
+          )}
           {oauthFeedback.text}
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-4">
+      {/* Stats */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard
           label="Media Source"
           value={connectedDrive ? "Google Drive" : "Not Connected"}
@@ -585,33 +615,63 @@ export function DriveBrowserPage() {
             title="Media Source"
             description="Connect your workspace Google Drive and explore the folder structure to find content."
           >
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-2">
               <button
                 onClick={connectGoogleDrive}
-                className="rounded-full bg-[#10332b] px-5 py-3 text-sm font-medium text-white"
+                className="flex items-center gap-2 rounded-xl bg-[#10332b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0e2c25]"
               >
+                <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
+                  <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clipRule="evenodd" />
+                </svg>
                 {connectionState === "connected" ? "Reconnect Drive" : "Connect Drive"}
               </button>
               <button
                 onClick={disconnectDrive}
                 disabled={connectionState !== "connected"}
-                className="rounded-full border border-[#d7ddd4] px-5 py-3 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-xl border border-[#d7ddd4] px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Disconnect
               </button>
             </div>
+            {actionError && (
+              <div className="mt-3 flex items-start gap-2 rounded-xl bg-red-50 px-3 py-2.5">
+                <svg viewBox="0 0 16 16" fill="currentColor" className="mt-0.5 size-3.5 shrink-0 text-red-500">
+                  <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm-.75 3.75a.75.75 0 011.5 0v3.5a.75.75 0 01-1.5 0v-3.5zm.75 7.25a1 1 0 110-2 1 1 0 010 2z" />
+                </svg>
+                <p className="text-xs text-red-700">{actionError}</p>
+              </div>
+            )}
             {connectedDrive && (
-              <div className="mt-6">
+              <div className="mt-4">
                 <button
                   onClick={() => {
-                    void fetchDriveData();
+                    setHasFetchedData(false);
+                    setFolderTree({});
+                    setFiles([]);
+                    setFilesNextPageToken(null);
+                    setLastFetchedFolderId(undefined);
+                    setSelectedFolderId("root");
+                    setSelectedFolderName("My Drive");
                   }}
                   disabled={connectionState !== "connected" || isFetchingData || isFetchingMoreFiles}
-                  className="w-full rounded-xl border border-[#10332b] px-5 py-3 text-sm font-medium text-[#10332b] disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isFetchingData || isFetchingMoreFiles
-                    ? "Fetching..."
-                    : "Refresh Drive Data"}
+                  {isFetchingData || isFetchingMoreFiles ? (
+                    <>
+                      <svg className="size-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Fetching…
+                    </>
+                  ) : (
+                    <>
+                      <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
+                        <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.201 2.466l-.312-.311h2.433a.75.75 0 000-1.5H3.989a.75.75 0 00-.75.75v4.242a.75.75 0 001.5 0v-2.43l.31.31a7 7 0 0011.712-3.138.75.75 0 00-1.449-.39zm1.23-3.723a.75.75 0 00.219-.53V2.929a.75.75 0 00-1.5 0V5.36l-.31-.31A7 7 0 003.239 8.188a.75.75 0 101.448.389A5.5 5.5 0 0113.89 6.11l.311.31h-2.432a.75.75 0 000 1.5h4.243a.75.75 0 00.53-.219z" clipRule="evenodd" />
+                      </svg>
+                      Refresh Drive Data
+                    </>
+                  )}
                 </button>
               </div>
             )}
@@ -624,30 +684,38 @@ export function DriveBrowserPage() {
             {!connectedDrive ? (
               <SimpleEmptyState text="Connect Drive first to load folders." />
             ) : !hasFetchedData ? (
-              <SimpleEmptyState text="Click Refresh to load the root folder." />
+              <SimpleEmptyState text="Click Refresh to load the folder tree." />
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <input
                   value={folderSearch}
                   onChange={(event) => setFolderSearch(event.target.value)}
                   placeholder="Filter folders"
                   className="mb-2 w-full rounded-2xl border border-[#d7ddd4] px-4 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
                 />
+
+                {/* My Drive section */}
+                <p className="px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                  My Drive
+                </p>
                 <button
                   onClick={() => {
                     setSelectedFolderId("root");
                     setSelectedFolderName("My Drive");
                   }}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
                     selectedFolderId === "root" || !selectedFolderId
                       ? "bg-emerald-100 text-emerald-900"
                       : "text-slate-600 hover:bg-slate-50"
                   }`}
                 >
-                  📁 My Drive
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="size-4 shrink-0 text-slate-400">
+                    <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" />
+                  </svg>
+                  My Drive
                 </button>
-                
-                <div className="mt-2 space-y-1">
+
+                <div className="space-y-0.5">
                   {(folderTree["root"] || [])
                     .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
                     .map((folder) => (
@@ -664,7 +732,40 @@ export function DriveBrowserPage() {
                         }}
                       />
                     ))}
+                  {(folderTree["root"] || []).length === 0 && (
+                    <p className="px-3 py-2 text-xs text-slate-400 italic">No media folders found.</p>
+                  )}
                 </div>
+
+                {/* Shared with me section */}
+                {((folderTree["shared"] || []).length > 0 || hasFetchedData) && (
+                  <>
+                    <p className="mt-3 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Shared with me
+                    </p>
+                    <div className="space-y-0.5">
+                      {(folderTree["shared"] || [])
+                        .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
+                        .map((folder) => (
+                          <FolderNode
+                            key={folder.id}
+                            folder={folder}
+                            folderTree={folderTree}
+                            expandedFolderIds={expandedFolderIds}
+                            selectedFolderId={selectedFolderId}
+                            onToggle={toggleFolder}
+                            onSelect={(f) => {
+                              setSelectedFolderId(f.id);
+                              setSelectedFolderName(f.name);
+                            }}
+                          />
+                        ))}
+                      {(folderTree["shared"] || []).length === 0 && (
+                        <p className="px-3 py-2 text-xs text-slate-400 italic">No shared folders found.</p>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </Panel>
@@ -925,6 +1026,8 @@ export function DriveBrowserPage() {
 }
 
 function FolderTypeBadge({ folder }: { folder: DriveFolder }) {
+  if (!folder.containsImages && !folder.containsVideos) return null;
+
   const label = folder.containsImages && folder.containsVideos
     ? "Photos + Videos"
     : folder.containsImages
@@ -932,7 +1035,7 @@ function FolderTypeBadge({ folder }: { folder: DriveFolder }) {
       : "Videos";
 
   return (
-    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">
+    <span className="shrink-0 rounded-full bg-[#eef1ea] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
       {label}
     </span>
   );
@@ -961,17 +1064,17 @@ function StatusPill({ state }: { state: "not_connected" | "connected" | "disconn
 function MetricCard({
   label,
   value,
-  note
+  subValue
 }: {
   label: string;
-  value: number;
-  note?: string;
+  value: number | string;
+  subValue?: string;
 }) {
   return (
     <div className="rounded-2xl bg-white px-4 py-4">
       <p className="text-xs uppercase tracking-[0.2em] text-slate-500">{label}</p>
       <p className="mt-2 text-3xl font-semibold text-slate-950">{value}</p>
-      {note ? <p className="mt-1 text-xs text-slate-500">{note}</p> : null}
+      {subValue ? <p className="mt-1 text-xs text-slate-500">{subValue}</p> : null}
     </div>
   );
 }
@@ -1019,10 +1122,9 @@ function FolderNode({
   const children = folderTree[folder.id] || [];
 
   return (
-    <div className="space-y-1">
+    <div>
       <div
-        className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm font-medium transition cursor-pointer ${isSelected ? "bg-emerald-50 text-emerald-900" : "text-slate-700 hover:bg-slate-100"
-          }`}
+        className={`group flex cursor-pointer items-center gap-1 rounded-xl py-1.5 pr-2 text-sm font-medium transition ${isSelected ? "bg-emerald-50 text-emerald-900" : "text-slate-700 hover:bg-slate-100"}`}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={() => onSelect(folder)}
       >
@@ -1031,7 +1133,7 @@ function FolderNode({
             e.stopPropagation();
             onToggle(folder);
           }}
-          className="flex h-5 w-5 items-center justify-center rounded hover:bg-black/5"
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-black/5"
         >
           {isExpanded ? (
             <span className="text-[10px] opacity-60">▼</span>
@@ -1039,12 +1141,22 @@ function FolderNode({
             <span className="text-[10px] opacity-60">▶</span>
           )}
         </button>
-        <span className="truncate flex-1">{folder.name}</span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate">{folder.name}</p>
+          {folder.owner ? (
+            <p className="truncate text-[10px] font-normal text-slate-400">{folder.owner}</p>
+          ) : null}
+        </div>
         <FolderTypeBadge folder={folder} />
+        {folder.owner ? (
+          <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-violet-700">
+            Shared
+          </span>
+        ) : null}
       </div>
 
       {isExpanded && children.length > 0 && (
-        <div className="space-y-1">
+        <div>
           {children.map(child => (
             <FolderNode
               key={child.id}
@@ -1060,8 +1172,8 @@ function FolderNode({
         </div>
       )}
       {isExpanded && !folderTree[folder.id] && (
-        <div className="py-1 px-8 text-xs text-slate-400 italic">
-          Loading...
+        <div className="py-1 text-xs italic text-slate-400" style={{ paddingLeft: `${depth * 12 + 32}px` }}>
+          Loading…
         </div>
       )}
     </div>

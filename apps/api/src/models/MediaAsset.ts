@@ -78,14 +78,15 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
 );
 
 mediaAssetSchema.pre("validate", function inferPostType(next) {
-  if (this.mediaType === "video") {
-    this.postType = "video";
-  }
-
-  if (this.groupId && this.mediaType === "image") {
-    this.postType = "carousel";
-  } else if (this.mediaType === "image" && !this.groupId) {
-    this.postType = "single";
+  // Only infer if postType was not explicitly set to "reel"
+  if (this.postType !== "reel") {
+    if (this.mediaType === "video") {
+      this.postType = "video";
+    } else if (this.groupId && this.mediaType === "image") {
+      this.postType = "carousel";
+    } else if (this.mediaType === "image" && !this.groupId) {
+      this.postType = "single";
+    }
   }
 
   next();

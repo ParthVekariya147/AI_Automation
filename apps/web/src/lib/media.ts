@@ -59,3 +59,10 @@ export function formatSchedule(value?: string) {
   if (!value) return "Not scheduled";
   return new Date(value).toLocaleString();
 }
+
+export function toInputDateTime(value?: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}

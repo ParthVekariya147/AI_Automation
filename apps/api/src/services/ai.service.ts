@@ -12,6 +12,44 @@ export function suggestHashtagsFromCaption(caption: string) {
   return unique.map((token) => `#${token}`);
 }
 
+export async function suggestHashtagsWithAI(caption: string): Promise<string[]> {
+  if (!env.GEMINI_API_KEY || !caption.trim()) {
+    return suggestHashtagsFromCaption(caption);
+  }
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: `You are an Instagram hashtag expert. Generate 12-15 highly relevant, trending Instagram hashtags for this caption. Mix popular and niche tags. Return ONLY hashtags separated by spaces, no explanation, no numbering:\n\n"${caption}"`
+              }
+            ]
+          }
+        ],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 200 }
+      })
+    });
+
+    if (!response.ok) return suggestHashtagsFromCaption(caption);
+
+    const payload = (await response.json()) as GeminiGenerateResponse;
+    const text = extractGeminiText(payload);
+    const extracted = text.match(/#[a-zA-Z0-9_]+/g) ?? [];
+    if (extracted.length >= 3) return extracted.slice(0, 15);
+  } catch {
+    // fall through to basic extraction
+  }
+
+  return suggestHashtagsFromCaption(caption);
+}
+
 export interface GenerateInstagramCaptionInput {
   mimeType: string;
   mediaBase64: string;

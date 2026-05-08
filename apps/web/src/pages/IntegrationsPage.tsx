@@ -104,7 +104,14 @@ export function IntegrationsPage() {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="space-y-6">
+      {/* Page heading */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">Integrations</h1>
+        <p className="mt-0.5 text-sm text-slate-500">Connect Instagram and Google Drive to power your content workflow</p>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
       {/* Instagram Panel */}
       <Panel
         title="Instagram"
@@ -259,6 +266,7 @@ export function IntegrationsPage() {
           Open Drive Browser
         </Link>
       </Panel>
+      </div>
     </div>
   );
 }

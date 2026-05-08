@@ -3,6 +3,7 @@ import net from "node:net";
 import { app } from "./app.js";
 import { connectDatabase } from "./config/database.js";
 import { env } from "./config/env.js";
+import { startScheduler } from "./services/scheduler.service.js";
 
 async function isExistingApiHealthy(port: number) {
   try {
@@ -47,6 +48,7 @@ async function findNextAvailablePort(startPort: number, maxChecks = 20) {
 async function start() {
   console.log("Starting API bootstrap...");
   await connectDatabase();
+  startScheduler();
   const interfaces = Object.values(os.networkInterfaces())
     .flat()
     .filter((item): item is NonNullable<typeof item> => Boolean(item))

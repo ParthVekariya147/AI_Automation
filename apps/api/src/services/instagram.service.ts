@@ -69,6 +69,32 @@ function buildFacebookGraphUrl(path: string, query: Record<string, string | unde
   return url.toString();
 }
 
+export async function resolveCollaboratorIds(
+  igUserId: string,
+  accessToken: string,
+  handles: string[]
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const handle of handles) {
+    try {
+      const url = buildFacebookGraphUrl(igUserId, {
+        fields: "business_discovery.fields(id,username)",
+        username: handle,
+        access_token: accessToken
+      });
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json() as Record<string, unknown>;
+      const discovery = data?.business_discovery as Record<string, unknown> | undefined;
+      const id = typeof discovery?.id === "string" ? discovery.id : undefined;
+      if (id) ids.push(id);
+    } catch {
+      // skip unresolvable handles
+    }
+  }
+  return ids;
+}
+
 export function ensureFacebookConfigured() {
   const missingEnvKeys: string[] = [];
   if (!env.FACEBOOK_APP_ID.trim()) {
@@ -327,11 +353,12 @@ export async function fetchConnectedInstagramAccounts(accessToken: string) {
   return Array.from(igAccountsById.values());
 }
 
-export async function postSingleMedia(igUserId: string, accessToken: string, imageUrl: string, caption: string) {
+export async function postSingleMedia(igUserId: string, accessToken: string, imageUrl: string, caption: string, collaborators?: string[]) {
   const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
     image_url: imageUrl,
     caption,
-    access_token: accessToken
+    access_token: accessToken,
+    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
   });
   const createRes = await fetch(createUrl, { method: "POST" });
   if (!createRes.ok) throw new ApiError(400, `Failed to create media container: ${await createRes.text()}`);
@@ -358,12 +385,13 @@ export async function postSingleMedia(igUserId: string, accessToken: string, ima
   return { externalPostId, permalink };
 }
 
-export async function postVideoMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string) {
+export async function postVideoMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
   const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
     video_url: videoUrl,
     media_type: "VIDEO",
     caption,
-    access_token: accessToken
+    access_token: accessToken,
+    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
   });
   const createRes = await fetch(createUrl, { method: "POST" });
   if (!createRes.ok) throw new ApiError(400, `Failed to create video container: ${await createRes.text()}`);
@@ -410,12 +438,13 @@ export async function postVideoMedia(igUserId: string, accessToken: string, vide
   return { externalPostId, permalink };
 }
 
-export async function postReelsMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string) {
+export async function postReelsMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
   const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
     video_url: videoUrl,
     media_type: "REELS",
     caption,
-    access_token: accessToken
+    access_token: accessToken,
+    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
   });
   const createRes = await fetch(createUrl, { method: "POST" });
   if (!createRes.ok) throw new ApiError(400, `Failed to create Reels container: ${await createRes.text()}`);

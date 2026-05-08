@@ -1,15 +1,11 @@
 import type { Response } from "express";
 import { z } from "zod";
-import { env } from "../config/env.js";
 import { AnalyticsLikeModel } from "../models/AnalyticsLike.js";
 import { PostDraftModel } from "../models/PostDraft.js";
 import { PublishJobModel } from "../models/PublishJob.js";
-import { InstagramAccountModel } from "../models/InstagramAccount.js";
-import { MediaAssetModel } from "../models/MediaAsset.js";
 import { createAuditLog } from "../services/audit.service.js";
-import { suggestHashtagsFromCaption } from "../services/ai.service.js";
-import { downloadDriveFileForPublish } from "../services/google-drive.service.js";
-import { postSingleMedia, postVideoMedia, postCarouselMedia, postReelsMedia } from "../services/instagram.service.js";
+import { suggestHashtagsWithAI } from "../services/ai.service.js";
+import { publishDraftById } from "../services/publish.service.js";
 import { suggestSmartTime } from "../services/smart-timing.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -26,7 +22,8 @@ const draftSchema = z.object({
   postType: z.enum(["single", "carousel", "video", "reel"]).optional(),
   aiCaption: z.string().optional(),
   collaborators: z.array(z.string()).default([]),
-  driveUploadRequested: z.boolean().default(false)
+  driveUploadRequested: z.boolean().default(false),
+  scheduledFor: z.string().datetime().optional()
 });
 
 const scheduleSchema = z.object({
@@ -49,7 +46,7 @@ export const listPosts = asyncHandler(async (req: AuthedRequest, res: Response) 
 
   const posts = await PostDraftModel.find({ businessId })
     .populate("instagramAccountId", "name handle")
-    .populate("mediaAssetIds", "originalName mediaType source")
+    .populate("mediaAssetIds", "originalName mediaType source publicUrl previewUrl driveThumbnailLink")
     .sort({ createdAt: -1 })
     .lean();
 
@@ -62,14 +59,30 @@ export const createDraft = asyncHandler(async (req: AuthedRequest, res: Response
   }
 
   const payload = draftSchema.parse(req.body);
-  const timing = await suggestSmartTime(payload.businessId);
+  const [timing, aiHashtags] = await Promise.all([
+    suggestSmartTime(payload.businessId),
+    payload.caption ? suggestHashtagsWithAI(payload.caption) : Promise.resolve([])
+  ]);
+
+  const isScheduled = Boolean(payload.scheduledFor);
 
   const draft = await PostDraftModel.create({
     ...payload,
+    hashtags: payload.hashtags?.length ? payload.hashtags : aiHashtags,
     createdBy: req.user.id,
     smartTimingSuggestedFor: timing.suggestedFor,
-    status: "new"
+    scheduledFor: payload.scheduledFor ? new Date(payload.scheduledFor) : undefined,
+    status: isScheduled ? "scheduled" : "new"
   });
+
+  if (isScheduled) {
+    await PublishJobModel.create({
+      businessId: draft.businessId,
+      postDraftId: draft._id,
+      status: "queued",
+      attempts: 0
+    });
+  }
 
   await createAuditLog({
     actorUserId: req.user.id,
@@ -90,21 +103,13 @@ export const createDraft = asyncHandler(async (req: AuthedRequest, res: Response
 
 export const suggestHashtags = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const draft = await PostDraftModel.findById(req.params.id);
+  if (!draft) throw new ApiError(404, "Post draft not found");
 
-  if (!draft) {
-    throw new ApiError(404, "Post draft not found");
-  }
-
-  const hashtags = suggestHashtagsFromCaption(draft.caption);
+  const hashtags = await suggestHashtagsWithAI(draft.caption);
   draft.hashtags = hashtags;
   await draft.save();
 
-  res.json({
-    success: true,
-    data: {
-      hashtags
-    }
-  });
+  res.json({ success: true, data: { hashtags } });
 });
 
 export const schedulePost = asyncHandler(async (req: AuthedRequest, res: Response) => {
@@ -142,151 +147,73 @@ export const schedulePost = asyncHandler(async (req: AuthedRequest, res: Respons
 });
 
 export const publishPost = asyncHandler(async (req: AuthedRequest, res: Response) => {
-  if (!req.user) {
-    throw new ApiError(401, "Authentication required");
-  }
+  if (!req.user) throw new ApiError(401, "Authentication required");
 
-  const draft = await PostDraftModel.findById(req.params.id);
+  const draftId = String(req.params.id);
+  const result = await publishDraftById(draftId, String(req.user.id));
 
-  if (!draft) {
-    throw new ApiError(404, "Post draft not found");
-  }
-
-  const account = await InstagramAccountModel.findById(draft.instagramAccountId);
-  if (!account || !account.accessToken || !account.igUserId) {
-    throw new ApiError(400, "Instagram account is not fully connected");
-  }
-
-  const mediaAssets = await MediaAssetModel.find({ _id: { $in: draft.mediaAssetIds } });
-  if (!mediaAssets.length) {
-    throw new ApiError(400, "No media assets found for this draft");
-  }
-
-  // PUBLIC_API_URL must be set to a publicly reachable URL (e.g. cloudflare tunnel).
-  // Meta's servers fetch the image from this URL — localhost will always fail.
-  const publicBase = env.PUBLIC_API_URL ?? `${req.protocol}://${req.get("host")}`;
-
-  if (!env.PUBLIC_API_URL) {
-    throw new ApiError(
-      400,
-      "PUBLIC_API_URL is not set in .env. Set it to your tunnel URL (e.g. https://abc.trycloudflare.com) so Meta can fetch your media files."
-    );
-  }
-
-  const businessId = draft.businessId.toString();
-
-  async function resolvePublishUrl(asset: typeof mediaAssets[number]): Promise<string> {
-    // If already a full http URL (e.g. CDN), use it directly
-    if (asset.publicUrl?.startsWith("http")) return asset.publicUrl;
-
-    // For Google Drive assets — download full-resolution file locally and serve it
-    if (asset.source === "google_drive" && asset.driveFileId) {
-      const { GoogleDriveConnectionModel } = await import("../models/GoogleDriveConnection.js");
-      const connection = await GoogleDriveConnectionModel.findOne({
-        businessId,
-        isActive: true,
-        refreshToken: { $exists: true, $ne: null }
-      }).sort({ updatedAt: -1 });
-
-      if (!connection) {
-        throw new ApiError(
-          400,
-          `No active Google Drive connection found. Reconnect Drive from the Integrations page before publishing.`
-        );
-      }
-
-      const localPath = await downloadDriveFileForPublish(
-        connection.id,
-        businessId,
-        asset.driveFileId,
-        asset.mimeType
-      );
-      return `${publicBase}${localPath}`;
-    }
-
-    // Local upload — prepend public base
-    const relativePath = asset.publicUrl || asset.previewUrl || "";
-    if (!relativePath) throw new ApiError(400, `Media asset ${asset._id} has no URL.`);
-    return relativePath.startsWith("http") ? relativePath : `${publicBase}${relativePath}`;
-  }
-
-  draft.status = "posting";
-  await draft.save();
-
-  let externalPostId: string;
-  let permalink: string;
-  let publishResult: { externalPostId: string; permalink: string };
-  const captionWithHashtags = `${draft.caption}\n\n${draft.hashtags.join(" ")}`.trim();
-
-  try {
-    if (draft.postType === "reel") {
-      const videoAsset = mediaAssets.find((m) => m.mediaType === "video");
-      if (!videoAsset) throw new ApiError(400, "No video asset found for Reel");
-      const url = await resolvePublishUrl(videoAsset);
-      const result = await postReelsMedia(account.igUserId, account.accessToken, url, captionWithHashtags);
-      publishResult = result;
-      externalPostId = result.externalPostId;
-      permalink = result.permalink;
-    } else if (draft.postType === "video") {
-      const videoAsset = mediaAssets.find((m) => m.mediaType === "video");
-      if (!videoAsset) throw new ApiError(400, "No video asset found");
-      const url = await resolvePublishUrl(videoAsset);
-      const result = await postVideoMedia(account.igUserId, account.accessToken, url, captionWithHashtags);
-      publishResult = result;
-      externalPostId = result.externalPostId;
-      permalink = result.permalink;
-    } else if (draft.postType === "carousel" || mediaAssets.length > 1) {
-      const urls = await Promise.all(mediaAssets.map(resolvePublishUrl));
-      const result = await postCarouselMedia(account.igUserId, account.accessToken, urls, captionWithHashtags);
-      publishResult = result;
-      externalPostId = result.externalPostId;
-      permalink = result.permalink;
-    } else {
-      const imageAsset = mediaAssets[0];
-      const url = await resolvePublishUrl(imageAsset);
-      const result = await postSingleMedia(account.igUserId, account.accessToken, url, captionWithHashtags);
-      publishResult = result;
-      externalPostId = result.externalPostId;
-      permalink = result.permalink;
-    }
-
-    draft.status = "live";
-    draft.igMediaId = externalPostId;
-    draft.permalink = permalink;
-    await draft.save();
-  } catch (error) {
-    draft.status = "error";
-    await draft.save();
-    throw error;
-  }
-
-  await PublishJobModel.findOneAndUpdate(
-    { postDraftId: draft._id },
-    {
-      businessId: draft.businessId,
-      postDraftId: draft._id,
-      status: "completed",
-      attempts: 1,
-      processedAt: new Date()
-    },
-    { upsert: true, new: true }
-  );
+  const draft = await PostDraftModel.findById(draftId).lean();
 
   await createAuditLog({
-    actorUserId: req.user.id,
-    businessId: draft.businessId.toString(),
+    actorUserId: String(req.user.id),
+    businessId: draft!.businessId.toString(),
     action: "post.published",
     entityType: "PostDraft",
-    entityId: draft.id
+    entityId: draftId
   });
 
-  res.json({
-    success: true,
-    data: {
-      draft,
-      result: publishResult
-    }
+  res.json({ success: true, data: { draft, result } });
+});
+
+export const deletePost = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) throw new ApiError(401, "Authentication required");
+
+  const draft = await PostDraftModel.findById(req.params.id);
+  if (!draft) throw new ApiError(404, "Post draft not found");
+
+  await draft.deleteOne();
+
+  await createAuditLog({
+    actorUserId: String(req.user.id),
+    businessId: draft.businessId.toString(),
+    action: "post_draft.deleted",
+    entityType: "PostDraft",
+    entityId: String(req.params.id)
   });
+
+  res.json({ success: true });
+});
+
+export const updatePost = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const updateSchema = z.object({
+    title: z.string().min(2).optional(),
+    caption: z.string().optional(),
+    hashtags: z.array(z.string()).optional(),
+    collaborators: z.array(z.string()).optional(),
+    scheduledFor: z.string().datetime().nullable().optional()
+  });
+
+  const payload = updateSchema.parse(req.body);
+  const draft = await PostDraftModel.findById(req.params.id);
+  if (!draft) throw new ApiError(404, "Post draft not found");
+
+  if (payload.title !== undefined) draft.title = payload.title;
+  if (payload.caption !== undefined) draft.caption = payload.caption;
+  if (payload.hashtags !== undefined) draft.hashtags = payload.hashtags;
+  if (payload.collaborators !== undefined) draft.collaborators = payload.collaborators;
+
+  if (payload.scheduledFor !== undefined) {
+    if (payload.scheduledFor === null) {
+      draft.scheduledFor = undefined;
+      if (draft.status === "scheduled") draft.status = "new";
+    } else {
+      draft.scheduledFor = new Date(payload.scheduledFor);
+      draft.status = "scheduled";
+    }
+  }
+
+  await draft.save();
+  res.json({ success: true, data: draft });
 });
 
 export const recordLikeSnapshot = asyncHandler(async (req: AuthedRequest, res: Response) => {

@@ -22,6 +22,7 @@ export type DriveFolderSummary = {
   webViewLink?: string | null;
   containsImages: boolean;
   containsVideos: boolean;
+  owner?: string;
 };
 
 export type DriveFileListResult = {
@@ -152,76 +153,51 @@ async function listImmediateFolders(
   const response = await drive.files.list({
     q: queryParts.join(" and "),
     orderBy: "name_natural",
-    fields: "files(id,name,webViewLink)"
+    fields: "files(id,name,webViewLink,owners)",
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
+    corpora: "allDrives"
   });
 
   return response.data.files ?? [];
 }
 
-async function listImmediateMedia(
+async function peekFolderMedia(
   drive: ReturnType<typeof google.drive>,
-  parentFolderId?: string
-) {
-  const queryParts = [
-    "trashed = false",
-    "(mimeType contains 'image/' or mimeType contains 'video/')"
-  ];
-
-  if (parentFolderId) {
-    queryParts.push(`'${parentFolderId}' in parents`);
-  } else {
-    queryParts.push("'root' in parents");
-  }
-
-  const response = await drive.files.list({
-    q: queryParts.join(" and "),
-    fields: "files(id,mimeType)",
-    pageSize: 200
-  });
-
-  return response.data.files ?? [];
-}
-
-async function getFolderMediaSummary(
-  drive: ReturnType<typeof google.drive>,
-  folderId: string,
-  depthRemaining: number
+  folderId: string
 ): Promise<{ containsImages: boolean; containsVideos: boolean }> {
-  const directMedia = await listImmediateMedia(drive, folderId);
-  let containsImages = directMedia.some((file) => file.mimeType?.startsWith("image/"));
-  let containsVideos = directMedia.some((file) => file.mimeType?.startsWith("video/"));
+  const baseParams = {
+    fields: "files(id)",
+    pageSize: 1,
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
+    corpora: "allDrives" as const
+  };
 
-  if ((containsImages && containsVideos) || depthRemaining <= 0) {
-    return { containsImages, containsVideos };
-  }
+  const [imageRes, videoRes] = await Promise.all([
+    drive.files.list({
+      ...baseParams,
+      q: `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`
+    }),
+    drive.files.list({
+      ...baseParams,
+      q: `'${folderId}' in parents and mimeType contains 'video/' and trashed = false`
+    })
+  ]);
 
-  const childFolders = await listImmediateFolders(drive, folderId);
-
-  if (!childFolders.length) {
-    return { containsImages, containsVideos };
-  }
-
-  const childSummaries = await Promise.all(
-    childFolders
-      .filter((folder): folder is { id: string } => Boolean(folder.id))
-      .map((folder) => getFolderMediaSummary(drive, folder.id, depthRemaining - 1))
-  );
-
-  for (const summary of childSummaries) {
-    containsImages = containsImages || summary.containsImages;
-    containsVideos = containsVideos || summary.containsVideos;
-  }
-
-  return { containsImages, containsVideos };
+  return {
+    containsImages: (imageRes.data.files?.length ?? 0) > 0,
+    containsVideos: (videoRes.data.files?.length ?? 0) > 0
+  };
 }
 
 export async function listRelevantDriveFolders(
   connectionId: string,
-  parentFolderId?: string
+  parentId?: string
 ): Promise<DriveFolderSummary[]> {
   const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
   const drive = google.drive({ version: "v3", auth: oauth2Client });
-  const folders = await listImmediateFolders(drive, parentFolderId);
+  const folders = await listImmediateFolders(drive, parentId);
 
   const summaries = await Promise.all(
     folders
@@ -229,11 +205,45 @@ export async function listRelevantDriveFolders(
         Boolean(folder.id)
       )
       .map(async (folder) => {
-        const mediaSummary = await getFolderMediaSummary(drive, folder.id, 3);
+        const mediaSummary = await peekFolderMedia(drive, folder.id);
         return {
           id: folder.id,
           name: folder.name || "Untitled folder",
           webViewLink: folder.webViewLink,
+          ...mediaSummary
+        };
+      })
+  );
+
+  return summaries.filter((folder) => folder.containsImages || folder.containsVideos);
+}
+
+export async function listSharedDriveFolders(connectionId: string): Promise<DriveFolderSummary[]> {
+  const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+  const drive = google.drive({ version: "v3", auth: oauth2Client });
+
+  const response = await drive.files.list({
+    q: "mimeType = 'application/vnd.google-apps.folder' and sharedWithMe = true and trashed = false",
+    orderBy: "name_natural",
+    fields: "files(id,name,webViewLink,owners)",
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
+    corpora: "user"
+  });
+
+  const folders = response.data.files ?? [];
+
+  const summaries = await Promise.all(
+    folders
+      .filter((folder): folder is drive_v3.Schema$File & { id: string } => Boolean(folder.id))
+      .map(async (folder) => {
+        const mediaSummary = await peekFolderMedia(drive, folder.id);
+        const ownerEmail = folder.owners?.[0]?.emailAddress ?? undefined;
+        return {
+          id: folder.id,
+          name: folder.name || "Untitled folder",
+          webViewLink: folder.webViewLink,
+          owner: ownerEmail,
           ...mediaSummary
         };
       })

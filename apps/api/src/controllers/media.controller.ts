@@ -5,6 +5,8 @@ import multer from "multer";
 import { z } from "zod";
 import { env } from "../config/env.js";
 import { MediaAssetModel } from "../models/MediaAsset.js";
+import { GoogleDriveConnectionModel } from "../models/GoogleDriveConnection.js";
+import { ensureDriveThumbnailCached } from "../services/google-drive.service.js";
 import { generateInstagramCaptionFromMedia } from "../services/ai.service.js";
 import { createAuditLog } from "../services/audit.service.js";
 import type { AuthedRequest } from "../types.js";
@@ -27,7 +29,7 @@ const importFromDriveSchema = z.object({
 const updateMediaSchema = z.object({
   workflowStatus: z.enum(["new", "scheduled", "posting", "live", "error"]).optional(),
   groupId: z.string().trim().optional().nullable(),
-  postType: z.enum(["single", "carousel", "video"]).optional(),
+  postType: z.enum(["single", "carousel", "video", "reel"]).optional(),
   scheduledTime: z.string().datetime().optional().nullable(),
   aiCaption: z.string().optional(),
   igMediaId: z.string().optional(),
@@ -143,6 +145,31 @@ export const importFromDrive = asyncHandler(async (req: AuthedRequest, res: Resp
     throw new ApiError(500, "Imported asset could not be loaded");
   }
 
+  // Cache Drive thumbnail locally so browser can display it without Google auth
+  if (mediaType === "image" && payload.driveFileId) {
+    try {
+      const connection = await GoogleDriveConnectionModel.findOne({
+        businessId: payload.businessId,
+        isActive: true,
+        refreshToken: { $exists: true, $ne: null }
+      }).sort({ updatedAt: -1 });
+
+      if (connection) {
+        const cachedUrl = await ensureDriveThumbnailCached(connection.id, payload.businessId, {
+          id: payload.driveFileId,
+          mimeType: payload.mimeType,
+          thumbnailLink: payload.driveThumbnailLink ?? null
+        });
+        if (cachedUrl) {
+          await MediaAssetModel.findByIdAndUpdate(asset._id, { previewUrl: cachedUrl });
+          asset.previewUrl = cachedUrl;
+        }
+      }
+    } catch {
+      // non-fatal — keep the Drive URL as fallback
+    }
+  }
+
   if (!alreadyImported) {
     await createAuditLog({
       actorUserId: req.user.id,
@@ -160,6 +187,52 @@ export const importFromDrive = asyncHandler(async (req: AuthedRequest, res: Resp
       alreadyImported
     }
   });
+});
+
+export const ensureThumbnail = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const { id } = req.params;
+  const businessId = req.query.businessId?.toString() || req.body?.businessId;
+
+  if (!businessId) throw new ApiError(400, "businessId is required");
+
+  const asset = await MediaAssetModel.findOne({ _id: id, businessId });
+  if (!asset) throw new ApiError(404, "Media asset not found");
+
+  if (asset.source !== "google_drive" || asset.mediaType !== "image" || !asset.driveFileId) {
+    return res.json({ success: true, data: { previewUrl: asset.previewUrl } });
+  }
+
+  // Already cached locally — nothing to do
+  if (asset.previewUrl && !asset.previewUrl.startsWith("http")) {
+    return res.json({ success: true, data: { previewUrl: asset.previewUrl } });
+  }
+
+  const connection = await GoogleDriveConnectionModel.findOne({
+    businessId,
+    isActive: true,
+    refreshToken: { $exists: true, $ne: null }
+  }).sort({ updatedAt: -1 });
+
+  if (!connection) {
+    return res.json({ success: true, data: { previewUrl: asset.previewUrl } });
+  }
+
+  try {
+    const cachedUrl = await ensureDriveThumbnailCached(connection.id, businessId, {
+      id: asset.driveFileId,
+      mimeType: asset.mimeType,
+      thumbnailLink: asset.driveThumbnailLink ?? null
+    });
+
+    if (cachedUrl) {
+      asset.previewUrl = cachedUrl;
+      await asset.save();
+    }
+  } catch {
+    // non-fatal
+  }
+
+  res.json({ success: true, data: { previewUrl: asset.previewUrl } });
 });
 
 export const listMedia = asyncHandler(async (req: AuthedRequest, res: Response) => {
