@@ -1,445 +1,431 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { ArrowLeft } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
+import { CountdownBadge } from "../components/queue/CountdownBadge";
+import { HashtagInput } from "../components/queue/HashtagInput";
+import { MediaPreview } from "../components/queue/MediaPreview";
+import { SchedulePicker } from "../components/queue/SchedulePicker";
+import { StatusPill } from "../components/queue/StatusPill";
 import { api } from "../lib/api";
 import { extractApiError } from "../lib/errors";
-import {
-  formatSchedule,
-  getMediaOpenUrl,
-  getMediaPreviewUrl,
-  toInputDateTime,
-} from "../lib/media";
+import { formatSchedule, getMediaOpenUrl, type WorkflowStatus } from "../lib/media";
 import type { MediaAsset } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
-import { ArrowLeft } from "lucide-react";
+
+const STATUS_OPTIONS: WorkflowStatus[] = ["new", "scheduled", "posting", "live", "error"];
+const POST_TYPES = ["single", "carousel", "video", "reel"] as const;
 
 export function QueueDetailPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
   const { id } = useParams();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
+
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [aiCaption, setAiCaption] = useState("");
+  const [hashtags, setHashtags] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<"preview" | "metadata" | "activity">("preview");
 
-  const { data, isLoading } = useQuery<{
-    asset: MediaAsset;
-    relatedGroupAssets: MediaAsset[];
-  }>({
+  const { data, isLoading } = useQuery<{ asset: MediaAsset; relatedGroupAssets: MediaAsset[] }>({
     queryKey: ["queue-detail", id, activeBusinessId],
     queryFn: async () =>
-      (
-        await api.get(`/media/${id}`, {
-          params: { businessId: activeBusinessId },
-        })
-      ).data.data,
+      (await api.get(`/media/${id}`, { params: { businessId: activeBusinessId } })).data.data,
     enabled: Boolean(id && activeBusinessId),
+    refetchInterval: (query) => {
+      const asset = (query.state.data as { asset: MediaAsset } | undefined)?.asset;
+      return asset?.workflowStatus === "posting" ? 15_000 : false;
+    },
   });
 
   useEffect(() => {
     if (data?.asset) {
       setAiCaption(data.asset.aiCaption || "");
+      setHashtags(data.asset.hashtags || []);
     }
-  }, [data?.asset?._id, data?.asset?.aiCaption]);
+  }, [data?.asset?._id]);
 
   async function updateAsset(payload: Record<string, unknown>) {
     if (!id || !activeBusinessId) return;
     setSaving(true);
     try {
-      await api.patch(`/media/${id}`, {
-        businessId: activeBusinessId,
-        ...payload,
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["queue-detail", id, activeBusinessId],
-      });
+      await api.patch(`/media/${id}`, { businessId: activeBusinessId, ...payload });
+      queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
-      queryClient.invalidateQueries({
-        queryKey: ["queue-overview", activeBusinessId],
-      });
+      queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
     } catch (error) {
       toast({
         tone: "error",
         title: "Update failed",
-        description: extractApiError(
-          error,
-          "Queue details could not be updated.",
-        ),
+        description: extractApiError(error, "Queue details could not be updated."),
       });
     } finally {
       setSaving(false);
     }
   }
 
+  async function generateCaption() {
+    if (!id || !activeBusinessId || generating) return;
+    setGenerating(true);
+    try {
+      const res = await api.post(`/media/${id}/generate-caption`, { businessId: activeBusinessId });
+      const caption = res.data?.data?.caption || res.data?.data?.asset?.aiCaption || "";
+      setAiCaption(caption);
+      queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
+      toast({ tone: "success", title: "Caption generated" });
+    } catch (error) {
+      toast({ tone: "error", title: "Generation failed", description: extractApiError(error, "Could not generate caption.") });
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function suggestHashtags(): Promise<string[]> {
+    if (!id || !activeBusinessId) return [];
+    setSuggesting(true);
+    try {
+      const res = await api.post(`/media/${id}/suggest-hashtags`, { businessId: activeBusinessId });
+      return res.data?.data?.hashtags ?? [];
+    } catch (error) {
+      toast({ tone: "error", title: "Hashtag suggestion failed", description: extractApiError(error, "") });
+      return [];
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
   if (isLoading || !data) {
     return (
-      <Panel title="Loading file details">
+      <Panel title="Loading…">
         <div className="h-96 animate-pulse rounded-3xl bg-[#f4f5f0]" />
       </Panel>
     );
   }
 
   const asset = data.asset;
-  const previewUrl = getMediaPreviewUrl(asset);
   const openUrl = getMediaOpenUrl(asset);
-
-  async function generateCaptionWithGemini() {
-    if (!id || !activeBusinessId || generating) return;
-    setGenerating(true);
-
-    try {
-      const response = await api.post(`/media/${id}/generate-caption`, {
-        businessId: activeBusinessId,
-      });
-      const generatedCaption =
-        response.data?.data?.caption ||
-        response.data?.data?.asset?.aiCaption ||
-        "";
-      setAiCaption(generatedCaption);
-      queryClient.invalidateQueries({
-        queryKey: ["queue-detail", id, activeBusinessId],
-      });
-      queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
-      queryClient.invalidateQueries({
-        queryKey: ["queue-overview", activeBusinessId],
-      });
-      toast({
-        tone: "success",
-        title: "Caption generated",
-        description: "Gemini created a new caption for this media.",
-      });
-    } catch (error) {
-      toast({
-        tone: "error",
-        title: "Caption generation failed",
-        description: extractApiError(
-          error,
-          "Gemini could not generate the caption.",
-        ),
-      });
-    } finally {
-      setGenerating(false);
-    }
-  }
+  const isPastSchedule = asset.scheduledTime && new Date(asset.scheduledTime).getTime() < Date.now();
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
         <div>
           <Link
             to="/queue"
             className="flex items-center gap-2 text-sm font-medium text-emerald-800 hover:text-emerald-900"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="h-4 w-4" />
             Back to queue
           </Link>
-
-          <h1 className="mt-2 text-2xl font-semibold text-slate-950">
-            {asset.originalName}
-          </h1>
+          <h1 className="mt-2 text-2xl font-semibold text-slate-950">{asset.originalName}</h1>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <StatusPill status={asset.workflowStatus as WorkflowStatus} pulse />
+            {asset.scheduledTime && <CountdownBadge scheduledTime={asset.scheduledTime} />}
+          </div>
         </div>
-        {openUrl ? (
+        {openUrl && (
           <a
             href={openUrl}
             target="_blank"
             rel="noreferrer"
-            className="rounded-full bg-[#10332b] px-5 py-3 text-sm font-medium text-white"
+            className="shrink-0 rounded-full bg-[#10332b] px-5 py-2.5 text-sm font-medium text-white"
           >
-            Open original file
+            Open original
           </a>
-        ) : null}
+        )}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <Panel
-          title="Preview"
-          description="Compact preview mode for faster review before editing scheduling and caption details."
-        >
-          <div className="mx-auto w-full max-w-lg overflow-hidden rounded-3xl border border-[#d7ddd4] bg-[#f5f6f1] p-4">
-            <div className="aspect-square overflow-hidden rounded-2xl bg-[#edf1e8]">
-              {asset.mediaType === "image" && previewUrl ? (
-                <img
-                  src={previewUrl}
-                  alt={asset.originalName}
-                  className="h-full w-full bg-[#f0f2eb] object-contain"
-                />
-              ) : asset.mediaType === "video" ? (
-                previewUrl ? (
-                  <video
-                    src={previewUrl}
-                    controls
-                    className="h-full w-full bg-[#0f172a] object-contain"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-slate-500">
-                    Video preview is not available
+      {/* Past schedule warning */}
+      {isPastSchedule && asset.workflowStatus === "scheduled" && (
+        <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <span className="font-semibold">⚠</span>
+          Scheduled time is in the past. Update the time or the scheduler will attempt to publish soon.
+        </div>
+      )}
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
+        {/* Left column: preview + tabs */}
+        <div className="space-y-4">
+          <div className="overflow-hidden rounded-3xl border border-[#d7ddd4] bg-[#f5f6f1]">
+            {/* Tab bar */}
+            <div className="flex border-b border-[#d7ddd4]">
+              {(["preview", "metadata", "activity"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`flex-1 py-3 text-xs font-semibold uppercase tracking-[0.15em] transition ${
+                    activeTab === tab
+                      ? "border-b-2 border-emerald-600 text-emerald-800"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Preview tab */}
+            {activeTab === "preview" && (
+              <div className="p-4">
+                <div className="mx-auto max-w-md overflow-hidden rounded-2xl bg-[#edf1e8]" style={{ maxHeight: "60vh" }}>
+                  <div className="aspect-square overflow-hidden">
+                    <MediaPreview asset={asset} className="h-full w-full" objectFit="contain" />
                   </div>
-                )
-              ) : (
-                <div className="flex h-full items-center justify-center text-slate-500">
-                  No preview available
                 </div>
-              )}
-            </div>
-          </div>
+              </div>
+            )}
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <MetaCard
-              label="Drive File ID"
-              value={asset.driveFileId || "Not from Drive"}
-            />
-            <MetaCard
-              label="Folder"
-              value={asset.folderName || "Not assigned"}
-            />
-            <MetaCard label="Status" value={asset.workflowStatus} />
-            <MetaCard label="Post Type" value={asset.postType} />
-            <MetaCard label="Group ID" value={asset.groupId || "No group"} />
-            <MetaCard
-              label="Scheduled Time"
-              value={formatSchedule(asset.scheduledTime)}
-            />
-            <MetaCard
-              label="IG Media ID"
-              value={asset.igMediaId || "Not linked"}
-            />
-            <MetaCard
-              label="Likes / Reach"
-              value={`${asset.likeCount || 0} / ${asset.reachCount || 0}`}
-            />
-          </div>
-        </Panel>
+            {/* Metadata tab */}
+            {activeTab === "metadata" && (
+              <div className="grid grid-cols-2 gap-3 p-4">
+                <MetaCard label="Drive File ID" value={asset.driveFileId || "Not from Drive"} />
+                <MetaCard label="Folder" value={asset.folderName || "Not assigned"} />
+                <MetaCard label="Media Type" value={asset.mediaType} />
+                <MetaCard label="Post Type" value={asset.postType} />
+                <MetaCard label="Group ID" value={asset.groupId || "No group"} />
+                <MetaCard label="Scheduled" value={formatSchedule(asset.scheduledTime)} />
+                <MetaCard label="IG Media ID" value={asset.igMediaId || "Not published"} />
+                <MetaCard label="Likes / Reach" value={`${asset.likeCount || 0} / ${asset.reachCount || 0}`} />
+              </div>
+            )}
 
-        <Panel
-          title="Plan this file"
-          description="Update the queue metadata from here."
-        >
-          <div className="space-y-4">
-            <Field
-              label="Status"
-              input={
-                <select
-                  defaultValue={asset.workflowStatus}
-                  onChange={(event) =>
-                    updateAsset({ workflowStatus: event.target.value })
-                  }
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                >
-                  {["new", "scheduled", "posting", "live", "error"].map(
-                    (value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ),
+            {/* Activity tab */}
+            {activeTab === "activity" && (
+              <div className="p-4">
+                <ol className="relative border-l border-[#d7ddd4] pl-6 space-y-4">
+                  <ActivityItem label="Imported" date={asset.createdAt} active />
+                  {asset.workflowStatus !== "new" && (
+                    <ActivityItem label={`Status: ${asset.workflowStatus}`} date={null} active />
                   )}
-                </select>
-              }
-            />
-            <Field
-              label="Group ID"
-              input={
-                <input
-                  defaultValue={asset.groupId || ""}
-                  onBlur={(event) =>
-                    updateAsset({ groupId: event.target.value || null })
-                  }
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                />
-              }
-            />
-            <Field
-              label="Post Type"
-              input={
-                <select
-                  defaultValue={asset.postType}
-                  onChange={(event) =>
-                    updateAsset({ postType: event.target.value })
-                  }
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                >
-                  {["single", "carousel", "video", "reel"].map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              }
-            />
-            <Field
-              label="Scheduled Time"
-              input={
-                <input
-                  type="datetime-local"
-                  defaultValue={toInputDateTime(asset.scheduledTime)}
-                  onBlur={(event) =>
-                    updateAsset({
-                      scheduledTime: event.target.value
-                        ? new Date(event.target.value).toISOString()
-                        : null,
-                    })
-                  }
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                />
-              }
-            />
-            <Field
-              label="AI Caption"
-              input={
-                <div className="space-y-3">
-                  <button
-                    type="button"
-                    onClick={generateCaptionWithGemini}
-                    disabled={generating}
-                    className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {generating ? "Generating..." : "Generate with Gemini"}
-                  </button>
-                  <textarea
-                    rows={6}
-                    value={aiCaption}
-                    onChange={(event) => setAiCaption(event.target.value)}
-                    onBlur={() => updateAsset({ aiCaption })}
-                    className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                  />
+                  {asset.scheduledTime && (
+                    <ActivityItem label="Scheduled to publish" date={asset.scheduledTime} active={false} />
+                  )}
+                  {asset.igMediaId && (
+                    <ActivityItem label="Published to Instagram" date={null} active />
+                  )}
+                </ol>
+              </div>
+            )}
+          </div>
+
+          {/* Related group items */}
+          {data.relatedGroupAssets.length > 1 && (
+            <Panel
+              title="Related group files"
+              description={
+                <div className="flex items-center justify-between">
+                  <span>Files sharing the same Group ID.</span>
+                  <Link to={`/queue/group/${asset.groupId}`} className="text-xs font-semibold text-emerald-700">
+                    View full group →
+                  </Link>
                 </div>
               }
-            />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field
-                label="IG Media ID"
-                input={
-                  <input
-                    defaultValue={asset.igMediaId || ""}
-                    onBlur={(event) =>
-                      updateAsset({ igMediaId: event.target.value })
-                    }
-                    className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                  />
-                }
-              />
-              <Field
-                label="Likes"
-                input={
-                  <input
-                    type="number"
-                    defaultValue={asset.likeCount || 0}
-                    onBlur={(event) =>
-                      updateAsset({ likeCount: Number(event.target.value) })
-                    }
-                    className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
-                  />
-                }
+            >
+              <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+                {data.relatedGroupAssets.map((rel) => (
+                  <Link
+                    key={rel._id}
+                    to={`/queue/${rel._id}`}
+                    className="overflow-hidden rounded-2xl border border-[#d7ddd4] bg-[#fbfbf8] transition hover:border-emerald-300"
+                  >
+                    <div className="aspect-square overflow-hidden bg-[#eef1ea]">
+                      <MediaPreview asset={rel} className="h-full w-full" objectFit="cover" />
+                    </div>
+                    <div className="p-3">
+                      <p className="truncate text-sm font-medium text-slate-900">{rel.originalName}</p>
+                      <StatusPill status={rel.workflowStatus as WorkflowStatus} size="sm" />
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </Panel>
+          )}
+        </div>
+
+        {/* Right column: plan card */}
+        <div className="space-y-4">
+          {/* Status & Schedule */}
+          <section className="rounded-3xl border border-[#d7ddd4] bg-white p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-[0.14em]">Status & Schedule</h3>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Status</p>
+              <div className="flex flex-wrap gap-2">
+                {STATUS_OPTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => updateAsset({ workflowStatus: s })}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition ${
+                      asset.workflowStatus === s
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-800"
+                        : "border-[#d7ddd4] text-slate-500 hover:border-emerald-300"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Post Type</p>
+              <div className="flex flex-wrap gap-2">
+                {POST_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => updateAsset({ postType: t })}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold capitalize transition ${
+                      asset.postType === t
+                        ? "border-emerald-400 bg-emerald-50 text-emerald-800"
+                        : "border-[#d7ddd4] text-slate-500 hover:border-emerald-300"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Scheduled Time</p>
+              <SchedulePicker
+                value={asset.scheduledTime}
+                onChange={(iso) => updateAsset({ scheduledTime: iso ?? null })}
               />
             </div>
-            <Field
-              label="Reach"
-              input={
+          </section>
+
+          {/* Caption */}
+          <section className="rounded-3xl border border-[#d7ddd4] bg-white p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-[0.14em]">Caption</h3>
+            <button
+              type="button"
+              onClick={generateCaption}
+              disabled={generating}
+              className="rounded-full border border-emerald-300 bg-emerald-50 px-4 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-60"
+            >
+              {generating ? "Generating…" : "✦ Generate with Gemini"}
+            </button>
+            <textarea
+              rows={5}
+              value={aiCaption}
+              onChange={(e) => setAiCaption(e.target.value)}
+              onBlur={() => updateAsset({ aiCaption })}
+              placeholder="Write or generate a caption…"
+              className="w-full resize-none rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none ring-emerald-200 focus:ring-2"
+            />
+            <p className="text-right text-[10px] text-slate-400">{aiCaption.length}/2200</p>
+          </section>
+
+          {/* Hashtags */}
+          <section className="rounded-3xl border border-[#d7ddd4] bg-white p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-[0.14em]">Hashtags</h3>
+            <HashtagInput
+              tags={hashtags}
+              onChange={(tags) => {
+                setHashtags(tags);
+                updateAsset({ hashtags: tags });
+              }}
+              onSuggest={suggestHashtags}
+              suggesting={suggesting}
+            />
+          </section>
+
+          {/* Group */}
+          <section className="rounded-3xl border border-[#d7ddd4] bg-white p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-[0.14em]">Carousel Group</h3>
+            <label className="block">
+              <span className="mb-1 block text-xs text-slate-500">Group ID</span>
+              <input
+                defaultValue={asset.groupId || ""}
+                onBlur={(e) => updateAsset({ groupId: e.target.value || null })}
+                placeholder="Leave blank for no group"
+                className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3 text-sm outline-none ring-emerald-200 focus:ring-2"
+              />
+            </label>
+            {asset.groupId && (
+              <Link
+                to={`/queue/group/${asset.groupId}`}
+                className="inline-block text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                View group ({data.relatedGroupAssets.length} items) →
+              </Link>
+            )}
+          </section>
+
+          {/* Analytics */}
+          <section className="rounded-3xl border border-[#d7ddd4] bg-white p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-[0.14em]">Analytics</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block text-xs text-slate-500">IG Media ID</span>
+                <input
+                  defaultValue={asset.igMediaId || ""}
+                  onBlur={(e) => updateAsset({ igMediaId: e.target.value })}
+                  className="w-full rounded-2xl border border-[#d7ddd4] px-3 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs text-slate-500">Likes</span>
+                <input
+                  type="number"
+                  defaultValue={asset.likeCount || 0}
+                  onBlur={(e) => updateAsset({ likeCount: Number(e.target.value) })}
+                  className="w-full rounded-2xl border border-[#d7ddd4] px-3 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
+                />
+              </label>
+              <label className="block col-span-2">
+                <span className="mb-1 block text-xs text-slate-500">Reach</span>
                 <input
                   type="number"
                   defaultValue={asset.reachCount || 0}
-                  onBlur={(event) =>
-                    updateAsset({ reachCount: Number(event.target.value) })
-                  }
-                  className="w-full rounded-2xl border border-[#d7ddd4] px-4 py-3"
+                  onBlur={(e) => updateAsset({ reachCount: Number(e.target.value) })}
+                  className="w-full rounded-2xl border border-[#d7ddd4] px-3 py-2 text-sm outline-none ring-emerald-200 focus:ring-2"
                 />
-              }
-            />
-
-            <div className="rounded-2xl bg-[#f6f7f2] px-4 py-3 text-sm text-slate-600">
-              {saving
-                ? "Saving changes..."
-                : "Changes save as you update each field."}
+              </label>
             </div>
-          </div>
-        </Panel>
+            {asset.igMediaId && (
+              <a
+                href={`https://www.instagram.com/p/${asset.igMediaId}/`}
+                target="_blank"
+                rel="noreferrer"
+                className="block text-sm font-semibold text-emerald-700 hover:text-emerald-800"
+              >
+                View on Instagram →
+              </a>
+            )}
+          </section>
+
+          {/* Save status */}
+          <p className="text-center text-xs text-slate-400">
+            {saving ? "Saving…" : "Changes auto-save on field blur."}
+          </p>
+        </div>
       </div>
-
-      {data.relatedGroupAssets.length > 1 ? (
-        <Panel
-          title="Related files in this group"
-          description={
-            <div className="flex items-center justify-between">
-              <span>
-                Compact suggestions for files that share the same Group ID.
-              </span>
-              <Link
-                to={`/queue/group/${asset.groupId}`}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-800"
-              >
-                View Full Group
-              </Link>
-            </div>
-          }
-        >
-          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
-            {data.relatedGroupAssets.map((related) => (
-              <Link
-                key={related._id}
-                to={`/queue/${related._id}`}
-                className="overflow-hidden rounded-2xl border border-[#d7ddd4] bg-[#fbfbf8] transition hover:border-emerald-300"
-              >
-                <div className="h-28 bg-[#eef1ea]">
-                  {getMediaPreviewUrl(related) ? (
-                    related.mediaType === "video" ? (
-                      <video
-                        src={getMediaPreviewUrl(related)}
-                        className="h-full w-full object-cover"
-                        muted
-                        playsInline
-                      />
-                    ) : (
-                      <img
-                        src={getMediaPreviewUrl(related)}
-                        alt={related.originalName}
-                        className="h-full w-full object-cover"
-                      />
-                    )
-                  ) : (
-                    <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                      No preview
-                    </div>
-                  )}
-                </div>
-                <div className="space-y-1 p-3">
-                  <p className="truncate text-sm font-medium text-slate-900">
-                    {related.originalName}
-                  </p>
-                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
-                    {related.workflowStatus}
-                  </p>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </Panel>
-      ) : null}
     </div>
-  );
-}
-
-function Field({ label, input }: { label: string; input: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-xs uppercase tracking-[0.2em] text-slate-500">
-        {label}
-      </span>
-      {input}
-    </label>
   );
 }
 
 function MetaCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-[#f6f7f2] px-4 py-4">
-      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-        {label}
-      </p>
-      <p className="mt-2 break-all text-sm font-medium text-slate-900">
-        {value}
-      </p>
+    <div className="rounded-2xl bg-[#f6f7f2] px-4 py-3">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">{label}</p>
+      <p className="mt-1 break-all text-sm font-medium text-slate-900">{value}</p>
     </div>
   );
 }
 
+function ActivityItem({ label, date, active }: { label: string; date: string | null | undefined; active: boolean }) {
+  return (
+    <li className="relative">
+      <span className={`absolute -left-[19px] mt-1 flex h-3 w-3 items-center justify-center rounded-full border-2 ${active ? "border-emerald-500 bg-emerald-500" : "border-[#d7ddd4] bg-white"}`} />
+      <p className="text-sm font-medium text-slate-700">{label}</p>
+      {date && <p className="text-xs text-slate-400">{new Date(date).toLocaleString()}</p>}
+    </li>
+  );
+}

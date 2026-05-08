@@ -34,6 +34,7 @@ export interface MediaAsset {
   postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: string;
   aiCaption?: string;
+  hashtags?: string[];
   igMediaId?: string;
   likeCount?: number;
   reachCount?: number;
@@ -70,13 +71,18 @@ export interface PostDraft {
   caption: string;
   hashtags?: string[];
   collaborators?: string[];
-  status: string;
+  status: "new" | "scheduled" | "posting" | "live" | "error";
   postType?: "single" | "carousel" | "video" | "reel";
-  scheduledFor?: string;
+  scheduledFor?: string; // ISO 8601
   smartTimingSuggestedFor?: string;
   permalink?: string;
+  errorLog?: string[];
   igMediaId?: string;
   createdAt: string;
+  updatedAt: string;
+  needsManualReview?: boolean;
+  retryCount?: number;
+  automationId?: string;
   instagramAccountId?: {
     _id: string;
     name: string;
@@ -92,3 +98,64 @@ export interface PostDraft {
     driveThumbnailLink?: string;
   }>;
 }
+
+export type GroupingMode = "subfolder" | "filename_prefix" | "manual" | "batch_size";
+export type CadenceType = "fixed_time" | "slots" | "smart" | "interval";
+export type AutomationStatus = "idle" | "running" | "finished" | "paused" | "manual_review";
+
+export interface FolderAutomation {
+  _id: string;
+  businessId: string;
+  folderId: string;
+  folderName: string;
+  igAccountId: { _id: string; handle: string } | string;
+  collaborators: string[];
+  groupingMode: GroupingMode;
+  batchSize: number;
+  carouselMaxSize: number;
+  cadence: {
+    type: CadenceType;
+    fixedTime?: string;
+    slots?: string[];
+    intervalHours?: number;
+  };
+  brandVoice?: string;
+  useEmojis: boolean;
+  reprocessImported: boolean;
+  status: AutomationStatus;
+  priority: number;
+  lastFetchedAt?: string;
+  finishedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationRun {
+  _id: string;
+  automationId: string;
+  startedAt: string;
+  finishedAt?: string;
+  filesImported: number;
+  groupsCreated: number;
+  postsScheduled: number;
+  status: "running" | "completed" | "failed";
+  errorLog: { step: string; message: string; at: string }[];
+}
+
+export interface AutomationPreview {
+  fileCount: number;
+  groupCount: number;
+  groups: {
+    files: { name: string; mediaType: "image" | "video" }[];
+    scheduledFor: string;
+    postType: "single" | "carousel" | "video" | "reel";
+  }[];
+}
+
+export interface InstagramAccount {
+  _id: string;
+  handle: string;
+  igUserId: string;
+  pageId?: string;
+}
+

@@ -16,11 +16,15 @@ export interface PostDraftEntity {
   groupId?: string;
   aiCaption?: string;
   collaborators?: string[];
+  collaboratorStatus?: Array<{ username: string; status: string; checkedAt: Date }>;
   igMediaId?: string;
   permalink?: string;
   likeCount?: number;
   reachCount?: number;
   driveUploadRequested: boolean;
+  automationId?: Schema.Types.ObjectId;
+  retryCount: number;
+  needsManualReview: boolean;
 }
 
 const postDraftSchema = new Schema<PostDraftEntity>(
@@ -52,11 +56,21 @@ const postDraftSchema = new Schema<PostDraftEntity>(
     groupId: { type: String, trim: true },
     aiCaption: { type: String, trim: true, default: "" },
     collaborators: [{ type: String, trim: true }],
+    collaboratorStatus: [
+      {
+        username: { type: String, trim: true },
+        status: { type: String, trim: true },
+        checkedAt: { type: Date }
+      }
+    ],
     igMediaId: { type: String, trim: true },
     permalink: { type: String, trim: true },
     likeCount: { type: Number, min: 0, default: 0 },
     reachCount: { type: Number, min: 0, default: 0 },
-    driveUploadRequested: { type: Boolean, default: false }
+    driveUploadRequested: { type: Boolean, default: false },
+    automationId: { type: Schema.Types.ObjectId, ref: "FolderAutomation", index: true },
+    retryCount: { type: Number, default: 0 },
+    needsManualReview: { type: Boolean, default: false, index: true }
   },
   { timestamps: true }
 );

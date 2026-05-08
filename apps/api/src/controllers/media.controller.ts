@@ -7,7 +7,7 @@ import { env } from "../config/env.js";
 import { MediaAssetModel } from "../models/MediaAsset.js";
 import { GoogleDriveConnectionModel } from "../models/GoogleDriveConnection.js";
 import { ensureDriveThumbnailCached } from "../services/google-drive.service.js";
-import { generateInstagramCaptionFromMedia } from "../services/ai.service.js";
+import { generateCaptionForCarousel, generateInstagramCaptionFromMedia, suggestHashtagsWithAI } from "../services/ai.service.js";
 import { createAuditLog } from "../services/audit.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -34,12 +34,18 @@ const updateMediaSchema = z.object({
   aiCaption: z.string().optional(),
   igMediaId: z.string().optional(),
   likeCount: z.coerce.number().min(0).optional(),
-  reachCount: z.coerce.number().min(0).optional()
+  reachCount: z.coerce.number().min(0).optional(),
+  hashtags: z.array(z.string().trim()).optional()
 });
 
 const generateCaptionSchema = z.object({
   businessId: z.string().min(1),
   tone: z.string().trim().max(100).optional()
+});
+
+const generateCarouselCaptionSchema = z.object({
+  businessId: z.string().min(1),
+  mediaIds: z.array(z.string().min(1)).min(1)
 });
 
 const MAX_GEMINI_INLINE_FILE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -333,6 +339,10 @@ export const updateMediaWorkflow = asyncHandler(async (req: AuthedRequest, res: 
     asset.reachCount = payload.reachCount;
   }
 
+  if (Array.isArray(payload.hashtags)) {
+    asset.hashtags = payload.hashtags;
+  }
+
   await asset.save();
 
   await createAuditLog({
@@ -351,8 +361,8 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
     throw new ApiError(401, "Authentication required");
   }
 
-  if (!env.GEMINI_API_KEY) {
-    throw new ApiError(400, "GEMINI_API_KEY is missing. Add it in apps/api/.env");
+  if (!env.geminiConfigured) {
+    throw new ApiError(400, "No Gemini API key found. Add GEMINI_API_KEYS to apps/api/.env");
   }
 
   const payload = generateCaptionSchema.parse(req.body);
@@ -411,6 +421,7 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
   });
 
   asset.aiCaption = generated.caption;
+  if (generated.hashtags?.length) asset.hashtags = generated.hashtags;
   await asset.save();
 
   await createAuditLog({
@@ -425,7 +436,62 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
     success: true,
     data: {
       asset,
-      caption: generated.caption
+      caption: generated.caption,
+      hashtags: generated.hashtags
+    }
+  });
+});
+
+export const generateCarouselCaption = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) throw new ApiError(401, "Authentication required");
+  if (!env.geminiConfigured) throw new ApiError(400, "No Gemini API key found. Add GEMINI_API_KEYS to apps/api/.env");
+
+  const payload = generateCarouselCaptionSchema.parse(req.body);
+
+  const assets = await MediaAssetModel.find({
+    _id: { $in: payload.mediaIds },
+    businessId: payload.businessId
+  });
+
+  if (!assets.length) throw new ApiError(404, "No media assets found");
+
+  const mediaPaths: string[] = [];
+  const mimeTypes: string[] = [];
+
+  for (const asset of assets) {
+    if (asset.filePath) {
+      mediaPaths.push(asset.filePath);
+      mimeTypes.push(asset.mimeType);
+    } else if (asset.previewUrl?.startsWith("/uploads/")) {
+      const relativePath = asset.previewUrl.replace("/uploads/", "");
+      mediaPaths.push(path.join(env.UPLOAD_DIR, relativePath));
+      mimeTypes.push(asset.mimeType);
+    }
+  }
+
+  if (!mediaPaths.length) {
+    throw new ApiError(400, "No local media files found for caption generation");
+  }
+
+  const generated = await generateCaptionForCarousel({ mediaPaths, mimeTypes });
+
+  const firstAsset = assets[0];
+  firstAsset.aiCaption = generated.caption;
+  await firstAsset.save();
+
+  await createAuditLog({
+    actorUserId: req.user.id,
+    businessId: payload.businessId,
+    action: "media.ai_caption_generated",
+    entityType: "MediaAsset",
+    entityId: firstAsset.id
+  });
+
+  res.json({
+    success: true,
+    data: {
+      caption: generated.caption,
+      hashtags: generated.hashtags
     }
   });
 });
@@ -464,4 +530,21 @@ export const deleteMediaAsset = asyncHandler(async (req: AuthedRequest, res: Res
       _id: asset._id
     }
   });
+});
+
+export const suggestHashtagsForMedia = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) {
+    throw new ApiError(401, "Authentication required");
+  }
+
+  const businessId = req.body.businessId?.toString() || req.query.businessId?.toString();
+  if (!businessId) throw new ApiError(400, "businessId is required");
+
+  const asset = await MediaAssetModel.findOne({ _id: req.params.id, businessId });
+  if (!asset) throw new ApiError(404, "Media asset not found");
+
+  const caption = asset.aiCaption?.trim() || asset.originalName;
+  const hashtags = await suggestHashtagsWithAI(caption);
+
+  res.json({ success: true, data: { hashtags } });
 });

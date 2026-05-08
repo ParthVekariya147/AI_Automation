@@ -1,54 +1,235 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { env } from "../config/env.js";
 
-export function suggestHashtagsFromCaption(caption: string) {
-  const tokens = caption
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, " ")
-    .split(/\s+/)
-    .filter((token) => token.length > 3);
+// ── API Key Manager ──────────────────────────────────────────────────────────
 
-  const unique = Array.from(new Set(tokens)).slice(0, 8);
+const ALL_GEMINI_KEYS = Object.keys(process.env)
+  .filter((k) => k.startsWith("GEMINI_API_KEY"))
+  .map((k) => process.env[k]?.trim() ?? "")
+  .filter(Boolean);
 
-  return unique.map((token) => `#${token}`);
+if (ALL_GEMINI_KEYS.length === 0 && env.GEMINI_API_KEY) {
+  ALL_GEMINI_KEYS.push(env.GEMINI_API_KEY);
 }
 
-export async function suggestHashtagsWithAI(caption: string): Promise<string[]> {
-  if (!env.GEMINI_API_KEY || !caption.trim()) {
-    return suggestHashtagsFromCaption(caption);
+class ApiKeyManager {
+  private keys: string[];
+  public currentIndex = 0;
+
+  constructor(keys: string[]) {
+    this.keys = keys;
+    console.log(`[AI Service] Loaded ${this.keys.length} Gemini API key(s).`);
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(env.GEMINI_API_KEY)}`;
+  current(): string {
+    return this.keys[this.currentIndex] ?? "";
+  }
 
+  rotate() {
+    if (this.keys.length > 1) {
+      this.currentIndex = (this.currentIndex + 1) % this.keys.length;
+      console.log(`[AI Service] Rotated to key index ${this.currentIndex}.`);
+    }
+  }
+
+  get count() {
+    return this.keys.length;
+  }
+}
+
+const keyManager = new ApiKeyManager(ALL_GEMINI_KEYS);
+
+// ── Gemini fetch with automatic key rotation ─────────────────────────────────
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+    finishReason?: string;
+  }>;
+};
+
+async function callGemini(fetchFn: (apiKey: string) => Promise<any>): Promise<any> {
+  const maxAttempts = Math.max(keyManager.count, 1);
+  let lastError: unknown;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const key = keyManager.current();
+    if (!key) throw new Error("No Gemini API keys configured in environment.");
+
+    try {
+      return await fetchFn(key);
+    } catch (err: any) {
+      lastError = err;
+      const isRetryable =
+        err?.status === 400 ||
+        err?.status === 429 ||
+        err?.status === 503 ||
+        String(err?.message).includes("API_KEY_INVALID") ||
+        String(err?.message).includes("quota") ||
+        String(err?.message).includes("overloaded");
+
+      if (isRetryable && keyManager.count > 1) {
+        console.warn(`[AI Service] Key ${keyManager.currentIndex} failed (${err?.status ?? err?.message}). Rotating…`);
+        keyManager.rotate();
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function geminiEndpoint(apiKey: string, model = "gemini-2.5-flash"): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+}
+
+function extractText(payload: GeminiResponse): string {
+  const parts = payload.candidates?.[0]?.content?.parts ?? [];
+  // Thinking models (gemini-2.5-*) prefix response parts with thought:true — skip those.
+  const responsePart = parts.find((p) => p.text && !p.thought) ?? parts.find((p) => p.text);
+  return responsePart?.text?.trim() ?? "";
+}
+
+/**
+ * Robustly extract { caption, hashtags } from any Gemini response —
+ * handles markdown fences, leading prose, trailing notes, and partial JSON.
+ */
+function extractCaptionResult(raw: string): { caption: string; hashtags: string[] } | null {
+  // ── Pass 1: strip code fences then parse the JSON object ──────────────────
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an Instagram hashtag expert. Generate 12-15 highly relevant, trending Instagram hashtags for this caption. Mix popular and niche tags. Return ONLY hashtags separated by spaces, no explanation, no numbering:\n\n"${caption}"`
-              }
-            ]
-          }
-        ],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 200 }
-      })
-    });
+    let text = raw
+      .replace(/^[\s\S]*?```(?:json)?\s*/i, "") // drop everything up to ```json
+      .replace(/```[\s\S]*$/i, "")              // drop closing ``` and trailing content
+      .trim();
 
-    if (!response.ok) return suggestHashtagsFromCaption(caption);
+    // Narrow to first { … last } in case there is still surrounding prose
+    const s = text.indexOf("{");
+    const e = text.lastIndexOf("}");
+    if (s !== -1 && e > s) text = text.slice(s, e + 1);
 
-    const payload = (await response.json()) as GeminiGenerateResponse;
-    const text = extractGeminiText(payload);
-    const extracted = text.match(/#[a-zA-Z0-9_]+/g) ?? [];
-    if (extracted.length >= 3) return extracted.slice(0, 15);
-  } catch {
-    // fall through to basic extraction
+    const parsed = JSON.parse(text);
+    if (typeof parsed?.caption === "string" && parsed.caption.trim()) {
+      return {
+        caption: parsed.caption.trim(),
+        hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : []
+      };
+    }
+  } catch { /* try next strategy */ }
+
+  // ── Pass 2: no code fence — find first { … last } ─────────────────────────
+  try {
+    const s = raw.indexOf("{");
+    const e = raw.lastIndexOf("}");
+    if (s !== -1 && e > s) {
+      const parsed = JSON.parse(raw.slice(s, e + 1));
+      if (typeof parsed?.caption === "string" && parsed.caption.trim()) {
+        return {
+          caption: parsed.caption.trim(),
+          hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : []
+        };
+      }
+    }
+  } catch { /* try next strategy */ }
+
+  // ── Pass 3: regex extraction from malformed / truncated JSON ──────────────
+  // Try complete string first, then fall back to truncated (MAX_TOKENS case)
+  const captionMatch =
+    raw.match(/"caption"\s*:\s*"((?:[^"\\]|\\.)*)"/) ??
+    raw.match(/"caption"\s*:\s*"((?:[^"\\]|\\.){20,})/); // truncated — grab what we have
+
+  if (captionMatch?.[1]) {
+    const caption = captionMatch[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .trim();
+
+    const hashtags: string[] = [];
+    const tagsBlock = raw.match(/"hashtags"\s*:\s*\[([\s\S]*?)\]/);
+    if (tagsBlock) {
+      for (const m of tagsBlock[1].matchAll(/"([^"]+)"/g)) hashtags.push(m[1]);
+    }
+    return { caption, hashtags };
   }
 
-  return suggestHashtagsFromCaption(caption);
+  return null; // could not extract anything useful
 }
+
+// ── Prompts ──────────────────────────────────────────────────────────────────
+
+const SYSTEM_ROLE = `You are an elite Instagram content strategist and copywriter.
+You craft viral, human-sounding captions that drive real engagement.
+You NEVER mention file names, technical metadata, or describe images as "images".
+You write as if you personally experienced what is shown.`;
+
+function singleImagePrompt(tone: string): string {
+  return `${SYSTEM_ROLE}
+
+Carefully study this image and create a complete Instagram post.
+
+CAPTION RULES:
+• 3–5 lines total: powerful hook → vivid story/insight → emotional resonance → clear CTA
+• Use 3–5 emojis placed naturally in the text (not all at the end)
+• Sound personal, authentic, and platform-native — not corporate or generic
+• NEVER mention the file name, image dimensions, or describe it as "a photo/image"
+• If a recognisable place or context is visible, weave it in naturally
+• Tone: ${tone}
+
+HASHTAG RULES:
+• Generate exactly 20 unique, targeted hashtags
+• Split: 5 ultra-niche (under 100k), 8 content-specific (100k–1M), 5 trending (1M–10M), 2 broad (10M+)
+• Base every hashtag on what you ACTUALLY SEE in the image — no generic fillers
+• No # prefix in the array values
+
+OUTPUT: Return ONLY valid JSON — no markdown, no explanation:
+{
+  "caption": "<full caption with emojis>",
+  "hashtags": ["tag1", "tag2", ...]
+}`;
+}
+
+function carouselPrompt(count: number, brandVoice: string): string {
+  return `${SYSTEM_ROLE}
+
+You are analysing ${count} images that form ONE Instagram carousel post.
+Build a SINGLE cohesive narrative that flows naturally across all slides.
+
+CAPTION RULES:
+• 4–6 lines: compelling swipe hook → slide-by-slide story arc → emotional peak → CTA that says "save & share"
+• Use 4–6 emojis woven naturally throughout the caption
+• First line must create urgency or curiosity to make the user swipe
+• NEVER mention filenames, image numbers, or use "this image/photo"
+• Brand voice: ${brandVoice || "authentic and engaging"}
+
+HASHTAG RULES:
+• Generate exactly 25 unique hashtags spanning the full carousel theme
+• Base them on the VISUAL CONTENT you see across ALL images
+• Split: 6 ultra-niche, 10 content-specific, 6 trending, 3 broad
+• No # prefix in the array values
+
+OUTPUT: Return ONLY valid JSON — no markdown, no explanation:
+{
+  "caption": "<full caption with emojis>",
+  "hashtags": ["tag1", "tag2", ...]
+}`;
+}
+
+function hashtagPrompt(caption: string): string {
+  return `You are an Instagram hashtag specialist.
+Analyse this caption and generate 15–20 highly relevant, targeted hashtags.
+
+Caption:
+"${caption}"
+
+RULES:
+• Mix ultra-niche, content-specific, trending, and broad tags
+• No # prefix — return tag text only
+• No generic filler tags like "like4like" or "follow"
+• Return ONLY a JSON array of strings, e.g. ["tag1","tag2"]`;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export interface GenerateInstagramCaptionInput {
   mimeType: string;
@@ -63,88 +244,192 @@ export interface GenerateInstagramCaptionOutput {
   hashtags: string[];
 }
 
-type GeminiGenerateResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{
-        text?: string;
-      }>;
-    };
-  }>;
-};
-
-function extractGeminiText(response: GeminiGenerateResponse) {
-  const text = response.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text?.trim();
-  return text || "";
-}
-
-function buildPrompt(input: GenerateInstagramCaptionInput) {
-  const requestedTone = input.tone?.trim() || "engaging and professional";
-
-  return [
-    "Create a ready-to-post Instagram caption from the uploaded media.",
-    `Media type: ${input.mediaType}`,
-    `Original file name: ${input.originalName}`,
-    `Tone: ${requestedTone}`,
-    "Requirements:",
-    "1. Write in natural human language.",
-    "2. If a place/landmark is visible, mention the likely location naturally.",
-    "3. Keep the caption concise (2-4 short lines).",
-    "4. End with a subtle call-to-action.",
-    "Return only the caption text."
-  ].join("\n");
-}
-
 export async function generateInstagramCaptionFromMedia(
   input: GenerateInstagramCaptionInput
 ): Promise<GenerateInstagramCaptionOutput> {
-  if (!env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY is missing in API environment variables");
+  if (!keyManager.current()) {
+    throw new Error("No Gemini API keys configured in environment.");
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(
-    env.GEMINI_API_KEY
-  )}`;
+  const tone = input.tone?.trim() || "engaging, warm, and professional";
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
-            { text: buildPrompt(input) },
-            {
-              inline_data: {
-                mime_type: input.mimeType,
-                data: input.mediaBase64
-              }
-            }
-          ]
-        }
-      ],
-      generationConfig: {
-        temperature: 0.7
-      }
-    })
+  return callGemini(async (apiKey) => {
+    const res = await fetch(geminiEndpoint(apiKey), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: singleImagePrompt(tone) },
+              { inline_data: { mime_type: input.mimeType, data: input.mediaBase64 } }
+            ]
+          }
+        ],
+        generationConfig: { temperature: 0.8, maxOutputTokens: 2048 }
+      })
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      const err = new Error(`Gemini ${res.status}: ${body}`);
+      (err as any).status = res.status;
+      throw err;
+    }
+
+    const payload = (await res.json()) as GeminiResponse;
+    const raw = extractText(payload);
+    const finishReason = payload.candidates?.[0]?.finishReason;
+    console.log(`[AI Service] Gemini raw (first 300 chars): ${raw.slice(0, 300)}`);
+    console.log(`[AI Service] finishReason: ${finishReason}, parts count: ${payload.candidates?.[0]?.content?.parts?.length ?? 0}`);
+
+    const result = extractCaptionResult(raw);
+
+    if (result?.caption) {
+      return {
+        caption: result.caption,
+        hashtags: result.hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`))
+      };
+    }
+
+    throw new Error(
+      `Could not parse caption from Gemini response. finishReason=${finishReason ?? "unknown"} raw=${raw.slice(0, 200)}`
+    );
   });
+}
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    throw new Error(`Gemini request failed (${response.status}): ${errorBody}`);
+export async function generateCaptionForCarousel(input: {
+  mediaPaths: string[];
+  mimeTypes: string[];
+  brandVoice?: string;
+}): Promise<GenerateInstagramCaptionOutput> {
+  if (!keyManager.current()) {
+    throw new Error("No Gemini API keys configured in environment.");
   }
 
-  const payload = (await response.json()) as GeminiGenerateResponse;
-  const caption = extractGeminiText(payload);
+  const MAX_SIZE = 10 * 1024 * 1024;
+  const MAX_IMAGES = 8;
 
-  if (!caption) {
-    throw new Error("Gemini did not return a caption");
+  const imageParts: Array<{ inline_data: { mime_type: string; data: string } }> = [];
+
+  for (let i = 0; i < Math.min(input.mediaPaths.length, MAX_IMAGES); i++) {
+    try {
+      const p = input.mediaPaths[i];
+      if (!p) continue;
+      const abs = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+      const buf = await readFile(abs);
+      if (buf.byteLength > MAX_SIZE) continue;
+      imageParts.push({
+        inline_data: { mime_type: input.mimeTypes[i] ?? "image/jpeg", data: buf.toString("base64") }
+      });
+    } catch {
+      // skip unreadable files
+    }
   }
 
-  return {
-    caption,
-    hashtags: suggestHashtagsFromCaption(caption)
-  };
+  if (!imageParts.length) {
+    throw new Error("No readable media files found for carousel caption generation.");
+  }
+
+  const prompt = carouselPrompt(imageParts.length, input.brandVoice ?? "");
+
+  return callGemini(async (apiKey) => {
+    const res = await fetch(geminiEndpoint(apiKey), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, ...imageParts] }],
+        generationConfig: { temperature: 0.85, maxOutputTokens: 1500 }
+      })
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      const err = new Error(`Gemini ${res.status}: ${body}`);
+      (err as any).status = res.status;
+      throw err;
+    }
+
+    const payload = (await res.json()) as GeminiResponse;
+    const raw = extractText(payload);
+    const result = extractCaptionResult(raw);
+
+    if (result?.caption) {
+      return {
+        caption: result.caption,
+        hashtags: result.hashtags.map((h) => (h.startsWith("#") ? h : `#${h}`))
+      };
+    }
+
+    // Carousel parse failed — retry with single-image on first slide
+    const first = imageParts[0];
+    return generateInstagramCaptionFromMedia({
+      mimeType: first.inline_data.mime_type,
+      mediaBase64: first.inline_data.data,
+      mediaType: "image",
+      originalName: "carousel"
+    });
+  });
+}
+
+export async function suggestHashtagsWithAI(caption: string): Promise<string[]> {
+  if (!keyManager.current() || !caption.trim()) {
+    return suggestHashtagsFromCaption(caption);
+  }
+
+  try {
+    return await callGemini(async (apiKey) => {
+      const res = await fetch(geminiEndpoint(apiKey), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: hashtagPrompt(caption) }] }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 300 }
+        })
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        const err = new Error(`Gemini ${res.status}: ${body}`);
+        (err as any).status = res.status;
+        throw err;
+      }
+
+      const payload = (await res.json()) as GeminiResponse;
+      const raw = extractText(payload);
+
+      // Try JSON array first
+      try {
+        const s = raw.indexOf("[");
+        const e = raw.lastIndexOf("]");
+        if (s !== -1 && e > s) {
+          const arr = JSON.parse(raw.slice(s, e + 1)) as string[];
+          if (Array.isArray(arr) && arr.length >= 3) {
+            return arr.slice(0, 20).map((h) => (h.startsWith("#") ? h : `#${h}`));
+          }
+        }
+      } catch { /* continue */ }
+
+      // Regex fallback — extract any word-like tokens that look like hashtags
+      const extracted = raw.match(/#?[a-zA-Z0-9_]{3,}/g) ?? [];
+      if (extracted.length >= 3) {
+        return extracted.slice(0, 20).map((h) => (h.startsWith("#") ? h : `#${h}`));
+      }
+
+      return suggestHashtagsFromCaption(caption);
+    });
+  } catch {
+    return suggestHashtagsFromCaption(caption);
+  }
+}
+
+// Simple keyword-based fallback (used when AI is unavailable)
+export function suggestHashtagsFromCaption(caption: string): string[] {
+  const tokens = caption
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 3);
+
+  return Array.from(new Set(tokens)).slice(0, 10).map((t) => `#${t}`);
 }

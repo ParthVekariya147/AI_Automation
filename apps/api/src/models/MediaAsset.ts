@@ -22,6 +22,7 @@ export interface MediaAssetEntity {
   postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: Date;
   aiCaption?: string;
+  hashtags: string[];
   igMediaId?: string;
   likeCount?: number;
   reachCount?: number;
@@ -70,6 +71,7 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
     },
     scheduledTime: { type: Date },
     aiCaption: { type: String, trim: true, default: "" },
+    hashtags: [{ type: String, trim: true, default: [] }],
     igMediaId: { type: String, trim: true },
     likeCount: { type: Number, min: 0, default: 0 },
     reachCount: { type: Number, min: 0, default: 0 }
@@ -78,8 +80,8 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
 );
 
 mediaAssetSchema.pre("validate", function inferPostType(next) {
-  // Only infer if postType was not explicitly set to "reel"
-  if (this.postType !== "reel") {
+  if (this.postType === "reel") return next();
+  if (!this.isModified("postType") || this.postType === undefined) {
     if (this.mediaType === "video") {
       this.postType = "video";
     } else if (this.groupId && this.mediaType === "image") {
@@ -88,7 +90,6 @@ mediaAssetSchema.pre("validate", function inferPostType(next) {
       this.postType = "single";
     }
   }
-
   next();
 });
 

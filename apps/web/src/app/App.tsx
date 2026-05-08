@@ -12,6 +12,7 @@ import { PostsPage } from "../pages/PostsPage";
 import { QueueDetailPage } from "../pages/QueueDetailPage";
 import { QueueGroupPage } from "../pages/QueueGroupPage";
 import { QueuePage } from "../pages/QueuePage";
+import { AutomationsPage } from "../pages/AutomationsPage";
 import { SetupPage } from "../pages/SetupPage";
 import { useAuthStore } from "../store/auth-store";
 
@@ -39,6 +40,16 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
+      <Route
+        path="/automations"
+        element={
+          <ProtectedRoute>
+            <AppShell>
+              <AutomationsPage />
+            </AppShell>
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/*"
         element={

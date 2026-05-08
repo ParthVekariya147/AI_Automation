@@ -1,11 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { ConfirmDialog } from "../components/queue/ConfirmDialog";
+import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
 import { extractApiError } from "../lib/errors";
 import { formatSchedule, getMediaPreviewUrl, resolveApiAssetUrl } from "../lib/media";
 import type { MediaAsset, PostDraft } from "../lib/types";
 import { useAuthStore } from "../store/auth-store";
+import { PageHeader, Icons, Pill } from "../lib/ds";
 
 const POST_TYPES = [
   { value: "single", label: "Single", icon: "🖼" },
@@ -15,22 +18,30 @@ const POST_TYPES = [
 ] as const;
 
 const STATUS_RING: Record<string, string> = {
-  new: "ring-slate-200",
-  scheduled: "ring-blue-400",
-  posting: "ring-amber-400",
-  live: "ring-emerald-500",
-  error: "ring-red-400"
+  new: "ring-2 ring-offset-2",
+  scheduled: "ring-2 ring-offset-2",
+  posting: "ring-2 ring-offset-2",
+  live: "ring-2 ring-offset-2",
+  error: "ring-2 ring-offset-2"
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  new: "bg-slate-100 text-slate-600",
-  scheduled: "bg-blue-50 text-blue-700",
-  posting: "bg-amber-50 text-amber-700",
-  live: "bg-emerald-50 text-emerald-700",
-  error: "bg-red-50 text-red-700"
+const STATUS_RING_COLOR: Record<string, string> = {
+  new: "var(--line)",
+  scheduled: "var(--info)",
+  posting: "var(--warn)",
+  live: "var(--ok)",
+  error: "var(--err)"
 };
 
-type TabId = "all" | "new" | "scheduled" | "live";
+const STATUS_BADGE_STYLE: Record<string, { bg: string; color: string }> = {
+  new: { bg: "var(--bg-2)", color: "var(--ink-2)" },
+  scheduled: { bg: "var(--info-soft)", color: "var(--info)" },
+  posting: { bg: "var(--warn-soft)", color: "var(--warn)" },
+  live: { bg: "var(--ok-soft)", color: "var(--ok)" },
+  error: { bg: "var(--err-soft)", color: "var(--err)" }
+};
+
+type TabId = "all" | "new" | "scheduled" | "live" | "manual_review";
 type ViewMode = "small" | "medium" | "large" | "list";
 
 interface LocationState {
@@ -59,13 +70,17 @@ export function PostsPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
+  const toast = useToast();
   const prefill = (location.state as LocationState) ?? {};
 
   const [activeTab, setActiveTab] = useState<TabId>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("medium");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [showCreate, setShowCreate] = useState(Boolean(prefill.mediaIds?.length));
   const [selectedPost, setSelectedPost] = useState<PostDraft | null>(null);
   const [repairedIds, setRepairedIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [confirmBulkRemove, setConfirmBulkRemove] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
   const { data: posts = [], isLoading: postsLoading } = useQuery<PostDraft[]>({
     queryKey: ["posts", activeBusinessId],
@@ -96,7 +111,8 @@ export function PostsPage() {
       label: "Scheduled",
       count: posts.filter((p) => p.status === "scheduled" || p.status === "posting").length
     },
-    { id: "live", label: "Live", count: posts.filter((p) => p.status === "live").length }
+    { id: "live", label: "Live", count: posts.filter((p) => p.status === "live").length },
+    { id: "manual_review", label: "Manual Review", count: posts.filter((p) => p.needsManualReview).length }
   ];
 
   const filteredPosts = posts.filter((post) => {
@@ -104,6 +120,7 @@ export function PostsPage() {
     if (activeTab === "new") return post.status === "new";
     if (activeTab === "scheduled") return post.status === "scheduled" || post.status === "posting";
     if (activeTab === "live") return post.status === "live" || post.status === "error";
+    if (activeTab === "manual_review") return post.needsManualReview;
     return true;
   });
 
@@ -141,6 +158,46 @@ export function PostsPage() {
     queryClient.invalidateQueries({ queryKey: ["posts", activeBusinessId] });
   }
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        selectedIds.length > 0 && selectedIds.length < filteredPosts.length;
+    }
+  }, [selectedIds.length, filteredPosts.length]);
+
+  function toggleSelectAll() {
+    if (selectedIds.length === filteredPosts.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredPosts.map((p) => p._id));
+    }
+  }
+
+  async function bulkDelete() {
+    if (!activeBusinessId || !selectedIds.length) return;
+    setConfirmBulkRemove(false);
+    setIsBulkDeleting(true);
+    try {
+      await Promise.allSettled(
+        selectedIds.map((id) =>
+          api.delete(`/posts/${id}`, { params: { businessId: activeBusinessId } })
+        )
+      );
+      toast({ tone: "success", title: `Deleted ${selectedIds.length} post${selectedIds.length !== 1 ? "s" : ""}.` });
+      setSelectedIds([]);
+      refresh();
+    } catch {
+      toast({ tone: "error", title: "Bulk delete failed" });
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  }
+
   const gridClass: Record<ViewMode, string> = {
     small: "grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6",
     medium: "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5",
@@ -149,69 +206,161 @@ export function PostsPage() {
   };
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Posts</h1>
-          <p className="text-sm text-slate-500">Manage your Instagram content</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* View mode toggles */}
-          <div className="flex rounded-xl border border-slate-200 bg-slate-50 p-0.5">
-            <ViewModeButton mode="small" active={viewMode} onClick={setViewMode} title="Small grid">
-              <SmallGridIcon />
-            </ViewModeButton>
-            <ViewModeButton mode="medium" active={viewMode} onClick={setViewMode} title="Medium grid">
-              <MediumGridIcon />
-            </ViewModeButton>
-            <ViewModeButton mode="large" active={viewMode} onClick={setViewMode} title="Large grid">
-              <LargeGridIcon />
-            </ViewModeButton>
-            <ViewModeButton mode="list" active={viewMode} onClick={setViewMode} title="List view">
-              <ListIcon />
-            </ViewModeButton>
-          </div>
+    <div className="space-y-6">
+      <ConfirmDialog
+        open={confirmBulkRemove}
+        title={`Delete ${selectedIds.length} post${selectedIds.length !== 1 ? "s" : ""}?`}
+        description="This will permanently delete all selected posts. This cannot be undone."
+        confirmLabel="Delete all"
+        destructive
+        onConfirm={bulkDelete}
+        onCancel={() => setConfirmBulkRemove(false)}
+      />
 
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 rounded-full bg-[#10332b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0e2c25]"
-          >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
-              <path d="M10 4a1 1 0 011 1v4h4a1 1 0 110 2h-4v4a1 1 0 11-2 0v-4H5a1 1 0 110-2h4V5a1 1 0 011-1z" />
-            </svg>
-            New Post
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Workspace"
+        title="Posts"
+        subtitle="Manage your Instagram content from drafts to published."
+        actions={
+          <div className="flex items-center gap-2">
+            {/* View mode toggles */}
+            <div
+              className="flex rounded-[10px] p-0.5"
+              style={{ background: "var(--bg-2)", border: "1px solid var(--line)" }}
+            >
+              <ViewModeButton mode="small" active={viewMode} onClick={setViewMode} title="Small grid">
+                <SmallGridIcon />
+              </ViewModeButton>
+              <ViewModeButton mode="medium" active={viewMode} onClick={setViewMode} title="Medium grid">
+                <MediumGridIcon />
+              </ViewModeButton>
+              <ViewModeButton mode="large" active={viewMode} onClick={setViewMode} title="Large grid">
+                <LargeGridIcon />
+              </ViewModeButton>
+              <ViewModeButton mode="list" active={viewMode} onClick={setViewMode} title="List view">
+                <ListIcon />
+              </ViewModeButton>
+            </div>
+
+            <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <Icons.Plus size={14} />
+              New Post
+            </button>
+          </div>
+        }
+      />
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-2xl bg-slate-100 p-1">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold transition ${
-              activeTab === tab.id
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {tab.label}
-            {tab.count > 0 && (
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none ${
-                  activeTab === tab.id
-                    ? "bg-slate-100 text-slate-700"
-                    : "bg-white/70 text-slate-500"
-                }`}
-              >
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
+      <div
+        className="flex gap-1 rounded-[14px] p-1"
+        style={{ background: "var(--bg-2)" }}
+      >
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          const isReview = tab.id === "manual_review";
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-[10px] py-2 text-xs font-semibold transition"
+              style={{
+                background: isActive ? (isReview ? "var(--err-soft)" : "var(--surface)") : "transparent",
+                color: isActive
+                  ? isReview ? "var(--err)" : "var(--ink)"
+                  : isReview ? "var(--err)" : "var(--muted)",
+                boxShadow: isActive ? "0 1px 3px rgba(0,0,0,0.08)" : "none"
+              }}
+            >
+              {tab.label}
+              {tab.count > 0 && (
+                <span
+                  className="rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none"
+                  style={{
+                    background: isActive
+                      ? isReview ? "var(--err)" : "var(--bg-2)"
+                      : isReview ? "var(--err-soft)" : "var(--surface)",
+                    color: isActive
+                      ? isReview ? "#fff" : "var(--ink-2)"
+                      : isReview ? "var(--err)" : "var(--muted)"
+                  }}
+                >
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
+
+      {/* Bulk actions bar */}
+      {selectedIds.length > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-3 rounded-[14px] px-4 py-3"
+          style={{ background: "var(--err-soft)", border: "1px solid var(--err)" }}
+        >
+          <span className="text-sm font-semibold" style={{ color: "var(--err)" }}>
+            {selectedIds.length} selected
+          </span>
+          <div className="h-4 w-px" style={{ background: "var(--err)" }} />
+          <button
+            onClick={() => setConfirmBulkRemove(true)}
+            disabled={isBulkDeleting}
+            className="rounded-[10px] px-3 py-1.5 text-sm font-semibold transition disabled:opacity-50"
+            style={{
+              background: "var(--surface)",
+              border: "1px solid var(--err)",
+              color: "var(--err)"
+            }}
+          >
+            {isBulkDeleting ? "Deleting…" : "Delete Selected"}
+          </button>
+          <button
+            onClick={() => setSelectedIds([])}
+            className="ml-auto text-xs"
+            style={{ color: "var(--err)" }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Banner for Manual Review */}
+      {activeTab === "manual_review" && filteredPosts.length > 0 && (
+        <div
+          className="rounded-[14px] px-4 py-3 text-sm font-semibold"
+          style={{ background: "var(--err-soft)", border: "1px solid var(--err)", color: "var(--err)" }}
+        >
+          These posts failed to publish 2 times. Review and retry manually.
+        </div>
+      )}
+
+      {/* Select all row */}
+      {!postsLoading && filteredPosts.length > 0 && (
+        <div className="flex items-center gap-2.5 px-1">
+          <input
+            ref={selectAllRef}
+            type="checkbox"
+            checked={selectedIds.length === filteredPosts.length && filteredPosts.length > 0}
+            onChange={toggleSelectAll}
+            className="h-4 w-4 cursor-pointer rounded"
+            style={{ accentColor: "var(--accent)" }}
+          />
+          <span className="text-xs" style={{ color: "var(--muted)" }}>
+            {selectedIds.length > 0
+              ? `${selectedIds.length} of ${filteredPosts.length} selected`
+              : `Select all (${filteredPosts.length})`}
+          </span>
+          {selectedIds.length > 0 && selectedIds.length < filteredPosts.length && (
+            <button
+              onClick={() => setSelectedIds(filteredPosts.map((p) => p._id))}
+              className="text-xs font-semibold hover:underline"
+              style={{ color: "var(--accent)" }}
+            >
+              Select all {filteredPosts.length}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Grid / List */}
       {postsLoading ? (
@@ -219,13 +368,19 @@ export function PostsPage() {
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
-              className={`animate-pulse rounded-2xl bg-slate-100 ${viewMode === "list" ? "h-20" : "aspect-square"}`}
+              className={`animate-pulse rounded-[14px] ${viewMode === "list" ? "h-20" : "aspect-square"}`}
+              style={{ background: "var(--bg-2)" }}
             />
           ))}
         </div>
       ) : filteredPosts.length === 0 && activeTab !== "all" ? (
-        <div className="rounded-2xl border border-dashed border-slate-200 py-16 text-center text-sm text-slate-400">
-          No {activeTab === "new" ? "drafts" : activeTab === "scheduled" ? "scheduled posts" : "live posts"} yet.
+        <div
+          className="rounded-[18px] border-2 border-dashed py-16 text-center"
+          style={{ borderColor: "var(--line-2)" }}
+        >
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            No {activeTab === "new" ? "drafts" : activeTab === "scheduled" ? "scheduled posts" : "live posts"} yet.
+          </p>
         </div>
       ) : (
         <div className={gridClass[viewMode]}>
@@ -238,6 +393,8 @@ export function PostsPage() {
                 allMedia={media}
                 onRefresh={refresh}
                 onOpenDetail={() => setSelectedPost(post)}
+                selected={selectedIds.includes(post._id)}
+                onToggleSelect={() => toggleSelect(post._id)}
               />
             ) : (
               <PostCard
@@ -248,6 +405,8 @@ export function PostsPage() {
                 viewMode={viewMode}
                 onRefresh={refresh}
                 onOpenDetail={() => setSelectedPost(post)}
+                selected={selectedIds.includes(post._id)}
+                onToggleSelect={() => toggleSelect(post._id)}
               />
             )
           )}
@@ -255,12 +414,24 @@ export function PostsPage() {
           {viewMode === "list" && (
             <button
               onClick={() => setShowCreate(true)}
-              className="flex items-center gap-3 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold text-slate-400 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-600"
+              className="flex items-center gap-3 rounded-[14px] border-2 border-dashed px-4 py-3 text-xs font-semibold transition"
+              style={{ borderColor: "var(--line-2)", color: "var(--muted)" }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = "var(--accent)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.background = "var(--accent-soft)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = "var(--line-2)";
+                e.currentTarget.style.color = "var(--muted)";
+                e.currentTarget.style.background = "transparent";
+              }}
             >
-              <span className="flex size-8 items-center justify-center rounded-xl bg-slate-100">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                </svg>
+              <span
+                className="flex size-8 items-center justify-center rounded-[10px]"
+                style={{ background: "var(--bg-2)" }}
+              >
+                <Icons.Plus size={14} />
               </span>
               New Post
             </button>
@@ -319,9 +490,12 @@ function ViewModeButton({
     <button
       onClick={() => onClick(mode)}
       title={title}
-      className={`flex size-7 items-center justify-center rounded-lg transition ${
-        active === mode ? "bg-white shadow-sm text-slate-800" : "text-slate-400 hover:text-slate-600"
-      }`}
+      className="flex size-7 items-center justify-center rounded-[8px] transition"
+      style={{
+        background: active === mode ? "var(--surface)" : "transparent",
+        color: active === mode ? "var(--ink)" : "var(--muted)",
+        boxShadow: active === mode ? "0 1px 3px rgba(0,0,0,0.07)" : "none"
+      }}
     >
       {children}
     </button>
@@ -381,7 +555,9 @@ function PostCard({
   allMedia,
   viewMode,
   onRefresh,
-  onOpenDetail
+  onOpenDetail,
+  selected,
+  onToggleSelect
 }: {
   post: PostDraft;
   businessId: string;
@@ -389,6 +565,8 @@ function PostCard({
   viewMode: ViewMode;
   onRefresh: () => void;
   onOpenDetail: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
@@ -397,6 +575,7 @@ function PostCard({
   const isVideo = post.mediaAssetIds?.[0]?.mediaType === "video";
   const isLive = post.status === "live";
   const isPosting = post.status === "posting";
+  const badgeStyle = STATUS_BADGE_STYLE[post.status] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
 
   async function runAction(type: "hashtags" | "publish") {
     setLoading(type);
@@ -421,10 +600,10 @@ function PostCard({
     <div className="flex flex-col gap-2">
       {/* Thumbnail */}
       <div
-        className={`group relative overflow-hidden rounded-2xl ring-2 ring-offset-2 ${STATUS_RING[post.status] ?? "ring-slate-200"} ${viewMode === "small" ? "aspect-square" : "aspect-square"}`}
+        className={`group relative overflow-hidden rounded-[14px] ${STATUS_RING[post.status] ?? ""} aspect-square`}
+        style={{ outlineColor: STATUS_RING_COLOR[post.status] ?? "transparent", cursor: "pointer" }}
         onClick={onOpenDetail}
         role="button"
-        style={{ cursor: "pointer" }}
       >
         {previewUrl ? (
           isVideo ? (
@@ -440,23 +619,39 @@ function PostCard({
             />
           )
         ) : (
-          <div className="flex h-full items-center justify-center bg-slate-100">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              className="size-8 text-slate-300"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <path strokeLinecap="round" d="M3 15l5-5 4 4 3-3 5 5" />
-            </svg>
+          <div className="flex h-full items-center justify-center" style={{ background: "var(--bg-2)" }}>
+            <Icons.Image size={32} style={{ color: "var(--line-2)" } as React.CSSProperties} />
+          </div>
+        )}
+
+        {/* Publish loader overlay */}
+        {(loading === "publish" || isPosting) && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50">
+            <span className="inline-block size-6 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           </div>
         )}
 
         {post.postType && post.postType !== "single" && (
-          <div className="absolute left-2 top-2 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-semibold uppercase text-white backdrop-blur-sm">
+          <div className="absolute left-2 top-2 z-20 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-semibold uppercase text-white backdrop-blur-sm">
             {post.postType}
+          </div>
+        )}
+
+        {post.needsManualReview && (
+          <div className="absolute left-2 top-8 z-20 flex size-3 items-center justify-center rounded-full bg-red-500 shadow-sm ring-2 ring-white" />
+        )}
+
+        {/* Checkbox */}
+        {onToggleSelect && (
+          <div className="absolute right-2 top-2 z-20">
+            <input
+              type="checkbox"
+              checked={selected ?? false}
+              onChange={onToggleSelect}
+              onClick={(e) => e.stopPropagation()}
+              className="h-3.5 w-3.5 cursor-pointer rounded"
+              style={{ accentColor: "var(--accent)" }}
+            />
           </div>
         )}
 
@@ -480,20 +675,36 @@ function PostCard({
             )
           ) : (
             <>
-              <button
-                onClick={() => runAction("hashtags")}
-                disabled={!!loading}
-                className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow hover:bg-white disabled:opacity-60"
-              >
-                {loading === "hashtags" ? "Generating…" : "# Hashtags"}
-              </button>
-              <button
-                onClick={() => runAction("publish")}
-                disabled={!!loading || isPosting}
-                className="rounded-full bg-[#10332b]/95 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-[#10332b] disabled:opacity-60"
-              >
-                {loading === "publish" || isPosting ? "Publishing…" : "Publish now"}
-              </button>
+              {post.needsManualReview ? (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    runAction("publish");
+                  }}
+                  disabled={!!loading || isPosting}
+                  className="rounded-full bg-red-600/95 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-red-600 disabled:opacity-60"
+                >
+                  {loading === "publish" || isPosting ? "Publishing…" : "Retry"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={() => runAction("hashtags")}
+                    disabled={!!loading}
+                    className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow hover:bg-white disabled:opacity-60"
+                  >
+                    {loading === "hashtags" ? "Generating…" : "# Hashtags"}
+                  </button>
+                  <button
+                    onClick={() => runAction("publish")}
+                    disabled={!!loading || isPosting}
+                    className="rounded-full px-3 py-1.5 text-xs font-semibold text-white shadow disabled:opacity-60"
+                    style={{ background: "var(--ink)" }}
+                  >
+                    {loading === "publish" || isPosting ? "Publishing…" : "Publish now"}
+                  </button>
+                </>
+              )}
               <button
                 onClick={onOpenDetail}
                 className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-white/30"
@@ -508,10 +719,12 @@ function PostCard({
       {/* Info below card (hidden in small mode) */}
       {infoVisible && (
         <div className="space-y-1 px-0.5">
-          <p className="truncate text-sm font-semibold leading-tight text-slate-900">{post.title}</p>
+          <p className="truncate text-sm font-semibold leading-tight" style={{ color: "var(--ink)" }}>
+            {post.title}
+          </p>
 
           {!post.hashtags?.length && post.caption && (
-            <p className="truncate text-[11px] text-slate-400">{post.caption}</p>
+            <p className="truncate text-[11px]" style={{ color: "var(--muted)" }}>{post.caption}</p>
           )}
 
           {post.hashtags?.length ? (
@@ -519,13 +732,17 @@ function PostCard({
               {post.hashtags.slice(0, 4).map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600"
+                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  style={{ background: "var(--info-soft)", color: "var(--info)" }}
                 >
                   {tag}
                 </span>
               ))}
               {post.hashtags.length > 4 && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                  style={{ background: "var(--bg-2)", color: "var(--muted)" }}
+                >
                   +{post.hashtags.length - 4}
                 </span>
               )}
@@ -534,22 +751,25 @@ function PostCard({
 
           <div className="flex flex-wrap items-center gap-1.5">
             <span
-              className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_BADGE[post.status] ?? "bg-slate-100 text-slate-600"}`}
+              className="inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+              style={{ background: badgeStyle.bg, color: badgeStyle.color }}
             >
               {post.status}
             </span>
             {post.scheduledFor && (
-              <span className="text-[10px] text-slate-500">{formatSchedule(post.scheduledFor)}</span>
+              <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+                {formatSchedule(post.scheduledFor)}
+              </span>
             )}
           </div>
 
           {post.collaborators?.length ? (
-            <p className="truncate text-[10px] text-slate-400">
+            <p className="truncate text-[10px]" style={{ color: "var(--muted)" }}>
               Collab: {post.collaborators.map((h) => `@${h}`).join(", ")}
             </p>
           ) : null}
 
-          {error && <p className="text-[10px] text-red-500">{error}</p>}
+          {error && <p className="text-[10px]" style={{ color: "var(--err)" }}>{error}</p>}
         </div>
       )}
     </div>
@@ -562,19 +782,46 @@ function ListCard({
   businessId,
   allMedia,
   onRefresh,
-  onOpenDetail
+  onOpenDetail,
+  selected,
+  onToggleSelect
 }: {
   post: PostDraft;
   businessId: string;
   allMedia: MediaAsset[];
   onRefresh: () => void;
   onOpenDetail: () => void;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const previewUrl = findPreviewUrl(post, allMedia);
   const isVideo = post.mediaAssetIds?.[0]?.mediaType === "video";
   const isLive = post.status === "live";
   const isPosting = post.status === "posting";
   const [loading, setLoading] = useState("");
+  const [showStatus, setShowStatus] = useState(false);
+  const statusRef = useRef<HTMLDivElement>(null);
+  const badgeStyle = STATUS_BADGE_STYLE[post.status] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (statusRef.current && !statusRef.current.contains(e.target as Node)) {
+        setShowStatus(false);
+      }
+    }
+    if (showStatus) document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [showStatus]);
+
+  async function changeStatus(newStatus: string) {
+    setShowStatus(false);
+    try {
+      await api.patch(`/posts/${post._id}`, { businessId, status: newStatus });
+      onRefresh();
+    } catch {
+      // noop
+    }
+  }
 
   async function publishNow(e: React.MouseEvent) {
     e.stopPropagation();
@@ -592,11 +839,37 @@ function ListCard({
   return (
     <div
       onClick={onOpenDetail}
-      className="group flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-3 shadow-sm transition hover:shadow-md"
+      className="group flex cursor-pointer items-center gap-3 rounded-[14px] px-3 py-3 transition"
+      style={{
+        background: selected ? "var(--err-soft)" : "var(--surface)",
+        border: `1px solid ${selected ? "var(--err)" : "var(--line)"}`,
+      }}
+      onMouseEnter={(e) => {
+        if (!selected) e.currentTarget.style.borderColor = "var(--line-2)";
+      }}
+      onMouseLeave={(e) => {
+        if (!selected) e.currentTarget.style.borderColor = "var(--line)";
+      }}
     >
+      {/* Checkbox */}
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={selected ?? false}
+          onChange={onToggleSelect}
+          onClick={(e) => e.stopPropagation()}
+          className="h-4 w-4 shrink-0 cursor-pointer rounded"
+          style={{ accentColor: "var(--accent)" }}
+        />
+      )}
+
       {/* Thumbnail */}
       <div
-        className={`relative size-14 shrink-0 overflow-hidden rounded-xl ring-2 ring-offset-1 ${STATUS_RING[post.status] ?? "ring-slate-200"}`}
+        className="relative size-14 shrink-0 overflow-hidden rounded-[10px]"
+        style={{
+          outline: `2px solid ${STATUS_RING_COLOR[post.status] ?? "var(--line)"}`,
+          outlineOffset: "2px"
+        }}
       >
         {previewUrl ? (
           isVideo ? (
@@ -612,17 +885,14 @@ function ListCard({
             />
           )
         ) : (
-          <div className="flex h-full items-center justify-center bg-slate-100">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              className="size-5 text-slate-300"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <path strokeLinecap="round" d="M3 15l5-5 4 4 3-3 5 5" />
-            </svg>
+          <div className="flex h-full items-center justify-center" style={{ background: "var(--bg-2)" }}>
+            <Icons.Image size={20} style={{ color: "var(--line-2)" } as React.CSSProperties} />
+          </div>
+        )}
+
+        {(loading === "publish" || isPosting) && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/50">
+            <span className="inline-block size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           </div>
         )}
       </div>
@@ -630,32 +900,98 @@ function ListCard({
       {/* Content */}
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <p className="truncate text-sm font-semibold text-slate-900">{post.title}</p>
-          <span
-            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_BADGE[post.status] ?? "bg-slate-100 text-slate-600"}`}
-          >
-            {post.status}
-          </span>
+          <p className="truncate text-sm font-semibold" style={{ color: "var(--ink)" }}>{post.title}</p>
+
+          {/* Inline status selector */}
+          <div ref={statusRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => { if (!isLive) setShowStatus((v) => !v); }}
+              className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition"
+              style={{
+                background: badgeStyle.bg,
+                color: badgeStyle.color,
+                cursor: !isLive ? "pointer" : "default"
+              }}
+            >
+              {post.status}
+              {!isLive && <span className="opacity-50">▾</span>}
+            </button>
+            {showStatus && !isLive && (
+              <div
+                className="absolute right-0 top-6 z-30 min-w-[130px] rounded-[12px] py-1 shadow-lg"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+              >
+                {(["new", "scheduled", "error"] as const).map((s) => {
+                  const sStyle = STATUS_BADGE_STYLE[s] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
+                  return (
+                    <button
+                      key={s}
+                      onClick={() => changeStatus(s)}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs capitalize transition"
+                      style={{
+                        fontWeight: s === post.status ? 700 : 500,
+                        color: s === post.status ? "var(--accent)" : "var(--ink-2)"
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-2)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ background: sStyle.color }}
+                      />
+                      {s === "new" ? "Draft" : s}
+                    </button>
+                  );
+                })}
+                <div className="my-1" style={{ borderTop: "1px solid var(--line)" }} />
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowStatus(false); publishNow(e as unknown as React.MouseEvent); }}
+                  disabled={!!loading || isPosting}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-medium transition disabled:opacity-50"
+                  style={{ color: "var(--ok)" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "var(--ok-soft)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: "var(--ok)" }} />
+                  {loading === "publish" || isPosting ? "Publishing…" : "Publish now"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {post.needsManualReview && (
+            <span
+              className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset"
+              style={{ background: "var(--err-soft)", color: "var(--err)", outline: "1px solid var(--err)" }}
+            >
+              Review
+            </span>
+          )}
         </div>
 
         {post.caption && (
-          <p className="truncate text-xs text-slate-400">{post.caption}</p>
+          <p className="truncate text-xs" style={{ color: "var(--muted)" }}>{post.caption}</p>
         )}
 
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {post.hashtags?.slice(0, 3).map((tag) => (
             <span
               key={tag}
-              className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600"
+              className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+              style={{ background: "var(--info-soft)", color: "var(--info)" }}
             >
               {tag}
             </span>
           ))}
           {(post.hashtags?.length ?? 0) > 3 && (
-            <span className="text-[10px] text-slate-400">+{post.hashtags!.length - 3} more</span>
+            <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+              +{post.hashtags!.length - 3} more
+            </span>
           )}
           {post.scheduledFor && (
-            <span className="text-[10px] text-slate-500">{formatSchedule(post.scheduledFor)}</span>
+            <span className="text-[10px]" style={{ color: "var(--muted)" }}>
+              {formatSchedule(post.scheduledFor)}
+            </span>
           )}
         </div>
       </div>
@@ -670,22 +1006,36 @@ function ListCard({
             href={post.permalink}
             target="_blank"
             rel="noreferrer"
-            className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+            className="rounded-full px-2.5 py-1 text-xs font-semibold transition"
+            style={{ background: "var(--bg-2)", border: "1px solid var(--line)", color: "var(--ink-2)" }}
           >
             View
           </a>
         ) : !isLive ? (
-          <button
-            onClick={publishNow}
-            disabled={!!loading || isPosting}
-            className="rounded-full bg-[#10332b] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#0e2c25] disabled:opacity-60"
-          >
-            {loading === "publish" || isPosting ? "…" : "Publish"}
-          </button>
+          post.needsManualReview ? (
+            <button
+              onClick={publishNow}
+              disabled={!!loading || isPosting}
+              className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
+              style={{ background: "var(--err)" }}
+            >
+              {loading === "publish" || isPosting ? "…" : "Retry"}
+            </button>
+          ) : (
+            <button
+              onClick={publishNow}
+              disabled={!!loading || isPosting}
+              className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
+              style={{ background: "var(--ink)" }}
+            >
+              {loading === "publish" || isPosting ? "…" : "Publish"}
+            </button>
+          )
         ) : null}
         <button
           onClick={onOpenDetail}
-          className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          className="rounded-full px-2.5 py-1 text-xs font-semibold transition"
+          style={{ background: "var(--bg-2)", border: "1px solid var(--line)", color: "var(--ink-2)" }}
         >
           Edit
         </button>
@@ -699,17 +1049,20 @@ function NewPostCard({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 text-slate-400 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-600"
+      className="group flex aspect-square flex-col items-center justify-center gap-2 rounded-[14px] border-2 border-dashed transition"
+      style={{ borderColor: "var(--line-2)", color: "var(--muted)" }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--accent)";
+        e.currentTarget.style.color = "var(--accent)";
+        e.currentTarget.style.background = "var(--accent-soft)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--line-2)";
+        e.currentTarget.style.color = "var(--muted)";
+        e.currentTarget.style.background = "transparent";
+      }}
     >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        className="size-8"
-      >
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-      </svg>
+      <Icons.Plus size={28} />
       <span className="text-xs font-semibold">New Post</span>
     </button>
   );
@@ -778,7 +1131,7 @@ function PostDetailModal({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["posts", businessId] });
-      onRefresh(); // refresh data, keep modal open
+      onRefresh();
     },
     onError: (err) => setActionError(extractApiError(err, "Failed to save."))
   });
@@ -787,7 +1140,7 @@ function PostDetailModal({
     mutationFn: () => api.post(`/posts/${post._id}/publish`, { businessId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["posts", businessId] });
-      onDone(); // refresh and close modal
+      onDone();
     },
     onError: (err) => setActionError(extractApiError(err, "Publish failed."))
   });
@@ -796,7 +1149,7 @@ function PostDetailModal({
     mutationFn: () => api.delete(`/posts/${post._id}`, { params: { businessId } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["posts", businessId] });
-      onDone(); // refresh and close modal
+      onDone();
     },
     onError: (err) => setActionError(extractApiError(err, "Delete failed."))
   });
@@ -820,43 +1173,58 @@ function PostDetailModal({
     deleteMutation.isPending ||
     suggestHashtagsMutation.isPending;
 
+  const badgeStyle = STATUS_BADGE_STYLE[post.status] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative flex w-full max-w-2xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl max-h-[90vh]">
+      <div
+        className="relative flex w-full max-w-2xl flex-col overflow-hidden shadow-2xl max-h-[90vh]"
+        style={{ background: "var(--surface)", borderRadius: "22px" }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
+        <div
+          className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: "1px solid var(--line)" }}
+        >
           <div className="flex items-center gap-3">
-            <h2 className="text-base font-bold text-slate-900 truncate max-w-xs">{post.title}</h2>
+            <h2 className="text-base font-bold truncate max-w-xs" style={{ color: "var(--ink)" }}>
+              {post.title}
+            </h2>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${STATUS_BADGE[post.status] ?? "bg-slate-100 text-slate-600"}`}
+              className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+              style={{ background: badgeStyle.bg, color: badgeStyle.color }}
             >
               {post.status}
             </span>
           </div>
           <button
             onClick={onClose}
-            className="flex size-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="flex size-8 items-center justify-center rounded-full transition"
+            style={{ color: "var(--muted)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-2)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
-              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-            </svg>
+            <Icons.X size={16} />
           </button>
         </div>
 
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
           {/* Left: preview */}
-          <div className="hidden w-56 shrink-0 border-r border-slate-100 bg-slate-50 sm:flex sm:flex-col">
+          <div
+            className="hidden w-56 shrink-0 sm:flex sm:flex-col"
+            style={{ borderRight: "1px solid var(--line)", background: "var(--bg)" }}
+          >
             <div className="flex flex-1 items-center justify-center p-4">
               {previewUrl ? (
                 isVideo ? (
                   <video
                     src={previewUrl}
-                    className="w-full rounded-2xl object-cover shadow-md"
+                    className="w-full rounded-[14px] object-cover shadow-md"
                     style={{ maxHeight: 240 }}
                     controls
                     muted
@@ -866,7 +1234,7 @@ function PostDetailModal({
                   <img
                     src={previewUrl}
                     alt={post.title}
-                    className="w-full rounded-2xl object-cover shadow-md"
+                    className="w-full rounded-[14px] object-cover shadow-md"
                     style={{ maxHeight: 240 }}
                     onError={(e) => {
                       (e.target as HTMLImageElement).style.display = "none";
@@ -874,36 +1242,28 @@ function PostDetailModal({
                   />
                 )
               ) : (
-                <div className="flex aspect-square w-full items-center justify-center rounded-2xl bg-slate-100">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth={1.5}
-                    className="size-10 text-slate-300"
-                  >
-                    <rect x="3" y="3" width="18" height="18" rx="3" />
-                    <path strokeLinecap="round" d="M3 15l5-5 4 4 3-3 5 5" />
-                  </svg>
+                <div
+                  className="flex aspect-square w-full items-center justify-center rounded-[14px]"
+                  style={{ background: "var(--bg-2)" }}
+                >
+                  <Icons.Image size={40} style={{ color: "var(--line-2)" } as React.CSSProperties} />
                 </div>
               )}
             </div>
 
-            {/* Media count */}
             {(post.mediaAssetIds?.length ?? 0) > 1 && (
-              <p className="pb-3 text-center text-xs text-slate-400">
+              <p className="pb-3 text-center text-xs" style={{ color: "var(--muted)" }}>
                 {post.mediaAssetIds!.length} media files
               </p>
             )}
 
-            {/* Instagram link */}
             {isLive && post.permalink && (
               <div className="px-4 pb-4">
                 <a
                   href={post.permalink}
                   target="_blank"
                   rel="noreferrer"
-                  className="block rounded-xl bg-gradient-to-r from-[#405DE6] via-[#C13584] to-[#FD1D1D] py-2 text-center text-xs font-semibold text-white"
+                  className="block rounded-[12px] py-2 text-center text-xs font-semibold text-white ig-grad"
                 >
                   View on Instagram
                 </a>
@@ -916,50 +1276,46 @@ function PostDetailModal({
             <div className="space-y-5 p-6">
               {/* Title */}
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Title
-                </label>
+                <label className="section-eyebrow mb-1.5 block">Title</label>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   disabled={isLive}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+                  className="input w-full"
                 />
               </div>
 
               {/* Caption */}
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Caption
-                </label>
+                <label className="section-eyebrow mb-1.5 block">Caption</label>
                 <textarea
                   rows={4}
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
                   disabled={isLive}
-                  className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+                  className="input w-full resize-none"
                 />
               </div>
 
               {/* Hashtags */}
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
-                  <label className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                    Hashtags
-                  </label>
+                  <label className="section-eyebrow">Hashtags</label>
                   {!isLive && (
                     <button
                       onClick={() => suggestHashtagsMutation.mutate()}
                       disabled={anyLoading}
-                      className="flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50"
+                      style={{
+                        background: "var(--accent-soft)",
+                        border: "1px solid var(--accent)",
+                        color: "var(--accent)"
+                      }}
                     >
                       {suggestHashtagsMutation.isPending ? (
-                        <svg className="size-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                        </svg>
+                        <span className="inline-block size-3 animate-spin rounded-full border border-current border-t-transparent" />
                       ) : (
-                        <span>✨</span>
+                        <Icons.Sparkles size={11} />
                       )}
                       {suggestHashtagsMutation.isPending ? "Generating…" : "AI Suggest"}
                     </button>
@@ -971,7 +1327,7 @@ function PostDetailModal({
                   onChange={(e) => setHashtagInput(e.target.value)}
                   disabled={isLive}
                   placeholder="#hashtag1 #hashtag2 #hashtag3…"
-                  className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+                  className="input w-full resize-none"
                 />
                 {hashtagInput && (
                   <div className="mt-2 flex flex-wrap gap-1">
@@ -982,7 +1338,8 @@ function PostDetailModal({
                       .map((tag) => (
                         <span
                           key={tag}
-                          className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-600"
+                          className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                          style={{ background: "var(--info-soft)", color: "var(--info)" }}
                         >
                           {tag.startsWith("#") ? tag : `#${tag}`}
                         </span>
@@ -993,97 +1350,103 @@ function PostDetailModal({
 
               {/* Collaborators */}
               <div>
-                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Collaborators
-                </label>
+                <label className="section-eyebrow mb-1.5 block">Collaborators</label>
                 <input
                   value={collaborators}
                   onChange={(e) => setCollaborators(e.target.value)}
                   disabled={isLive}
                   placeholder="@username1, @username2"
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+                  className="input w-full"
                 />
               </div>
 
               {/* Schedule */}
               {!isLive && (
                 <div>
-                  <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                    Scheduled For
-                  </label>
+                  <label className="section-eyebrow mb-1.5 block">Scheduled For</label>
                   <input
                     type="datetime-local"
                     value={scheduledFor}
                     onChange={(e) => setScheduledFor(e.target.value)}
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                    className="input w-full"
                   />
-                  <p className="mt-1 text-[10px] text-slate-400">
+                  <p className="mt-1 text-[10px]" style={{ color: "var(--muted)" }}>
                     Clear to remove scheduling (saves as draft).
                   </p>
                 </div>
               )}
 
               {/* Post info */}
-              <div className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500 space-y-1">
+              <div
+                className="rounded-[14px] px-4 py-3 text-xs space-y-1"
+                style={{ background: "var(--bg)", color: "var(--muted)" }}
+              >
                 {post.postType && (
                   <div className="flex justify-between">
                     <span>Type</span>
-                    <span className="font-medium capitalize text-slate-700">{post.postType}</span>
+                    <span className="font-medium capitalize" style={{ color: "var(--ink-2)" }}>{post.postType}</span>
                   </div>
                 )}
                 {post.scheduledFor && (
                   <div className="flex justify-between">
                     <span>Scheduled</span>
-                    <span className="font-medium text-slate-700">{formatSchedule(post.scheduledFor)}</span>
+                    <span className="font-medium" style={{ color: "var(--ink-2)" }}>{formatSchedule(post.scheduledFor)}</span>
                   </div>
                 )}
                 {post.igMediaId && (
                   <div className="flex justify-between">
                     <span>Instagram ID</span>
-                    <span className="font-mono text-slate-700">{post.igMediaId}</span>
+                    <span className="font-mono" style={{ color: "var(--ink-2)" }}>{post.igMediaId}</span>
                   </div>
                 )}
               </div>
 
               {actionError && (
-                <div className="rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{actionError}</div>
+                <div
+                  className="rounded-[12px] px-3 py-2 text-xs"
+                  style={{ background: "var(--err-soft)", color: "var(--err)" }}
+                >
+                  {actionError}
+                </div>
               )}
             </div>
           </div>
         </div>
 
         {/* Footer actions */}
-        <div className="border-t border-slate-100 px-6 py-4">
+        <div className="px-6 py-4" style={{ borderTop: "1px solid var(--line)" }}>
           <div className="flex items-center gap-2">
             {/* Delete */}
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
                 disabled={anyLoading}
-                className="flex items-center gap-1.5 rounded-2xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-500 transition hover:bg-red-50 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-[12px] px-4 py-2.5 text-sm font-semibold transition disabled:opacity-50"
+                style={{
+                  border: "1px solid var(--err)",
+                  color: "var(--err)"
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--err-soft)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
               >
-                <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
-                  <path
-                    fillRule="evenodd"
-                    d="M8.75 1A2.75 2.75 0 006 3.75v.443c-.795.077-1.584.176-2.365.298a.75.75 0 10.23 1.482l.149-.022.841 10.518A2.75 2.75 0 007.596 19h4.807a2.75 2.75 0 002.742-2.53l.841-10.52.149.023a.75.75 0 00.23-1.482A41.03 41.03 0 0014 4.193V3.75A2.75 2.75 0 0011.25 1h-2.5zM10 4c.84 0 1.673.025 2.5.075V3.75c0-.69-.56-1.25-1.25-1.25h-2.5c-.69 0-1.25.56-1.25 1.25v.325C8.327 4.025 9.16 4 10 4zM8.58 7.72a.75.75 0 00-1.5.06l.3 7.5a.75.75 0 101.5-.06l-.3-7.5zm4.34.06a.75.75 0 10-1.5-.06l-.3 7.5a.75.75 0 101.5.06l.3-7.5z"
-                    clipRule="evenodd"
-                  />
-                </svg>
+                <Icons.Trash size={15} />
                 Delete
               </button>
             ) : (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-red-600 font-medium">Sure?</span>
+                <span className="text-xs font-medium" style={{ color: "var(--err)" }}>Sure?</span>
                 <button
                   onClick={() => deleteMutation.mutate()}
                   disabled={anyLoading}
-                  className="rounded-2xl bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:bg-red-600 disabled:opacity-50"
+                  className="rounded-[12px] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                  style={{ background: "var(--err)" }}
                 >
                   {deleteMutation.isPending ? "Deleting…" : "Yes, Delete"}
                 </button>
                 <button
                   onClick={() => setConfirmDelete(false)}
-                  className="rounded-2xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  className="rounded-[12px] px-3 py-2 text-xs font-semibold transition"
+                  style={{ border: "1px solid var(--line)", color: "var(--ink-2)" }}
                 >
                   Cancel
                 </button>
@@ -1097,7 +1460,7 @@ function PostDetailModal({
               <button
                 onClick={() => publishMutation.mutate()}
                 disabled={anyLoading || isPosting}
-                className="rounded-2xl border border-[#10332b] px-4 py-2.5 text-sm font-semibold text-[#10332b] transition hover:bg-[#10332b]/5 disabled:opacity-50"
+                className="btn-secondary disabled:opacity-50"
               >
                 {publishMutation.isPending || isPosting ? "Publishing…" : "Publish Now"}
               </button>
@@ -1108,13 +1471,13 @@ function PostDetailModal({
               <button
                 onClick={() => updateMutation.mutate()}
                 disabled={anyLoading}
-                className="rounded-2xl bg-[#10332b] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#0e2c25] disabled:opacity-50"
+                className="btn-primary disabled:opacity-50"
               >
                 {updateMutation.isPending
                   ? "Saving…"
                   : scheduledFor
-                  ? "Save & Schedule"
-                  : "Save Changes"}
+                    ? "Save & Schedule"
+                    : "Save Changes"}
               </button>
             )}
           </div>
@@ -1178,11 +1541,19 @@ function CreateDrawer({
     setGeneratingCaption(true);
     setError("");
     try {
-      const response = await api.post(`/media/${selectedMediaIds[0]}/generate-caption`, {
-        businessId
-      });
-      const generated =
-        response.data?.data?.caption ?? response.data?.data?.asset?.aiCaption ?? "";
+      let generated = "";
+      if (selectedMediaIds.length > 1) {
+        const response = await api.post("/media/generate-carousel-caption", {
+          businessId,
+          mediaIds: selectedMediaIds
+        });
+        generated = response.data?.data?.caption ?? "";
+      } else {
+        const response = await api.post(`/media/${selectedMediaIds[0]}/generate-caption`, {
+          businessId
+        });
+        generated = response.data?.data?.caption ?? response.data?.data?.asset?.aiCaption ?? "";
+      }
       setCaption(generated);
       if (!title.trim() && generated) {
         const words = generated
@@ -1233,16 +1604,27 @@ function CreateDrawer({
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative flex w-full max-w-md flex-col bg-white shadow-2xl sm:rounded-l-3xl">
-        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-          <h2 className="text-base font-bold text-slate-900">New Post</h2>
+      <div
+        className="relative flex w-full max-w-md flex-col shadow-2xl sm:rounded-l-[22px]"
+        style={{ background: "var(--surface)" }}
+      >
+        {/* Drawer header */}
+        <div
+          className="flex items-center justify-between px-6 py-4"
+          style={{ borderBottom: "1px solid var(--line)" }}
+        >
+          <div>
+            <p className="section-eyebrow mb-0.5">New Post</p>
+            <h2 className="text-base font-bold" style={{ color: "var(--ink)" }}>Create Post</h2>
+          </div>
           <button
             onClick={onClose}
-            className="flex size-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="flex size-8 items-center justify-center rounded-full transition"
+            style={{ color: "var(--muted)" }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-2)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           >
-            <svg viewBox="0 0 20 20" fill="currentColor" className="size-4">
-              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
-            </svg>
+            <Icons.X size={16} />
           </button>
         </div>
 
@@ -1250,9 +1632,7 @@ function CreateDrawer({
           <div className="space-y-6 p-6">
             {/* Post type */}
             <section>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Post Type
-              </p>
+              <p className="section-eyebrow mb-2">Post Type</p>
               <div className="grid grid-cols-4 gap-2">
                 {POST_TYPES.map((pt) => (
                   <button
@@ -1261,11 +1641,11 @@ function CreateDrawer({
                       setPostType(pt.value);
                       setSelectedMediaIds([]);
                     }}
-                    className={`flex flex-col items-center gap-1 rounded-xl py-2.5 text-xs font-semibold transition ${
-                      postType === pt.value
-                        ? "bg-[#10332b] text-white"
-                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                    }`}
+                    className="flex flex-col items-center gap-1 rounded-[12px] py-2.5 text-xs font-semibold transition"
+                    style={{
+                      background: postType === pt.value ? "var(--ink)" : "var(--bg-2)",
+                      color: postType === pt.value ? "#fff" : "var(--ink-2)"
+                    }}
                   >
                     <span className="text-base">{pt.icon}</span>
                     {pt.label}
@@ -1276,13 +1656,11 @@ function CreateDrawer({
 
             {/* Instagram account */}
             <section>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Instagram Account
-              </p>
+              <p className="section-eyebrow mb-2">Instagram Account</p>
               <select
                 value={igAccountId}
                 onChange={(e) => setIgAccountId(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="input w-full"
               >
                 <option value="">Select account…</option>
                 {accounts.map((acc: any) => (
@@ -1296,15 +1674,16 @@ function CreateDrawer({
             {/* Media picker */}
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Select Media
-                </p>
-                <span className="text-[11px] text-slate-400">
+                <p className="section-eyebrow">Select Media</p>
+                <span className="text-[11px]" style={{ color: "var(--muted)" }}>
                   {selectedMediaIds.length}/{maxSelect} selected
                 </span>
               </div>
               {filteredMedia.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-200 py-8 text-center text-xs text-slate-400">
+                <div
+                  className="rounded-[14px] border-2 border-dashed py-8 text-center text-xs"
+                  style={{ borderColor: "var(--line-2)", color: "var(--muted)" }}
+                >
                   No {postType === "video" || postType === "reel" ? "video" : "image"} assets.
                   <br />
                   Import files from Drive Browser first.
@@ -1312,7 +1691,7 @@ function CreateDrawer({
               ) : (
                 <div className="grid grid-cols-4 gap-1.5">
                   {filteredMedia.map((m) => {
-                    const selected = selectedMediaIds.includes(m._id);
+                    const sel = selectedMediaIds.includes(m._id);
                     const mPreviewUrl = getMediaPreviewUrl(m);
                     const order = selectedMediaIds.indexOf(m._id);
                     return (
@@ -1320,11 +1699,11 @@ function CreateDrawer({
                         key={m._id}
                         onClick={() => toggleMedia(m._id)}
                         title={m.originalName}
-                        className={`relative aspect-square overflow-hidden rounded-xl border-2 transition ${
-                          selected
-                            ? "border-emerald-500 ring-2 ring-emerald-200"
-                            : "border-transparent hover:border-slate-300"
-                        }`}
+                        className="relative aspect-square overflow-hidden rounded-[10px] border-2 transition"
+                        style={{
+                          borderColor: sel ? "var(--ok)" : "transparent",
+                          outline: sel ? "2px solid var(--ok-soft)" : "none"
+                        }}
                       >
                         {mPreviewUrl ? (
                           m.mediaType === "video" ? (
@@ -1342,14 +1721,23 @@ function CreateDrawer({
                             />
                           )
                         ) : (
-                          <div className="flex h-full items-center justify-center bg-slate-100 text-[9px] text-slate-400">
+                          <div
+                            className="flex h-full items-center justify-center text-[9px]"
+                            style={{ background: "var(--bg-2)", color: "var(--muted)" }}
+                          >
                             No preview
                           </div>
                         )}
-                        {selected && (
-                          <div className="absolute inset-0 flex items-start justify-end bg-emerald-900/20 p-1">
-                            <span className="flex size-4 items-center justify-center rounded-full bg-emerald-500 text-[9px] font-bold text-white">
-              {order + 1}
+                        {sel && (
+                          <div
+                            className="absolute inset-0 flex items-start justify-end p-1"
+                            style={{ background: "rgba(47,143,92,0.18)" }}
+                          >
+                            <span
+                              className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
+                              style={{ background: "var(--ok)" }}
+                            >
+                              {order + 1}
                             </span>
                           </div>
                         )}
@@ -1363,99 +1751,101 @@ function CreateDrawer({
             {/* Caption */}
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                  Caption
-                </p>
+                <p className="section-eyebrow">Caption</p>
                 <button
                   onClick={generateAiCaption}
                   disabled={generatingCaption || !selectedMediaIds.length}
-                  className="flex items-center gap-1.5 rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50"
+                  style={{
+                    background: "var(--accent-soft)",
+                    border: "1px solid var(--accent)",
+                    color: "var(--accent)"
+                  }}
                 >
                   {generatingCaption ? (
-                    <svg className="size-3 animate-spin" viewBox="0 0 24 24" fill="none">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                    </svg>
+                    <span className="inline-block size-3 animate-spin rounded-full border border-current border-t-transparent" />
                   ) : (
-                    <span>✨</span>
+                    <Icons.Sparkles size={11} />
                   )}
                   {generatingCaption ? "Generating…" : "AI Generate"}
                 </button>
               </div>
               {!selectedMediaIds.length && (
-                <p className="mb-1 text-[10px] text-slate-400">Select media first to enable AI.</p>
+                <p className="mb-1 text-[10px]" style={{ color: "var(--muted)" }}>
+                  Select media first to enable AI.
+                </p>
               )}
               <textarea
                 ref={captionRef}
                 rows={3}
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
-                placeholder="Write your caption, or use ✨ AI Generate above…"
-                className="w-full resize-none rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                placeholder="Write your caption, or use AI Generate above…"
+                className="input w-full resize-none"
               />
             </section>
 
             {/* Title */}
             <section>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Title
-              </p>
+              <p className="section-eyebrow mb-2">Title</p>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Auto-filled from AI caption, or type here…"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="input w-full"
               />
             </section>
 
             {/* Schedule */}
             <section>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Schedule (optional)
-              </p>
+              <p className="section-eyebrow mb-2">Schedule (optional)</p>
               <input
                 type="datetime-local"
                 value={scheduledFor}
                 onChange={(e) => setScheduledFor(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="input w-full"
               />
-              <p className="mt-1.5 text-[10px] text-slate-400">
+              <p className="mt-1.5 text-[10px]" style={{ color: "var(--muted)" }}>
                 Leave blank to save as draft. Set a time to auto-schedule the post.
               </p>
             </section>
 
             {/* Collaborators */}
             <section>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
-                Collaborators (optional)
-              </p>
+              <p className="section-eyebrow mb-2">Collaborators (optional)</p>
               <input
                 value={collaborators}
                 onChange={(e) => setCollaborators(e.target.value)}
                 placeholder="@username1, @username2"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+                className="input w-full"
               />
-              <p className="mt-1.5 text-[10px] text-slate-400">
+              <p className="mt-1.5 text-[10px]" style={{ color: "var(--muted)" }}>
                 After publishing, each collaborator gets an invite in Instagram.
               </p>
             </section>
           </div>
         </div>
 
-        <div className="border-t border-slate-100 px-6 py-4">
+        {/* Drawer footer */}
+        <div className="px-6 py-4" style={{ borderTop: "1px solid var(--line)" }}>
           {error && (
-            <div className="mb-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-600">{error}</div>
+            <div
+              className="mb-3 rounded-[12px] px-3 py-2 text-xs"
+              style={{ background: "var(--err-soft)", color: "var(--err)" }}
+            >
+              {error}
+            </div>
           )}
           <button
             onClick={() => createMutation.mutate()}
             disabled={createMutation.isPending}
-            className="w-full rounded-2xl bg-[#10332b] py-3 text-sm font-semibold text-white transition hover:bg-[#0e2c25] disabled:opacity-50"
+            className="btn-primary w-full justify-center disabled:opacity-50"
           >
             {createMutation.isPending
               ? "Saving…"
               : willSchedule
-              ? "Schedule Post"
-              : "Save Draft"}
+                ? "Schedule Post"
+                : "Save Draft"}
           </button>
         </div>
       </div>

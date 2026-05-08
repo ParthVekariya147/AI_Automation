@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   createDraft,
   deletePost,
+  getCollaboratorStatus,
   listPosts,
   publishPost,
   schedulePost,
@@ -21,3 +22,4 @@ postRouter.delete("/:id", requireBusinessRole("admin"), deletePost);
 postRouter.post("/:id/suggest-hashtags", requireBusinessRole("admin"), suggestHashtags);
 postRouter.post("/:id/schedule", requireBusinessRole("admin"), schedulePost);
 postRouter.post("/:id/publish", requireBusinessRole("admin"), publishPost);
+postRouter.get("/:id/collaborators", requireBusinessRole("admin"), getCollaboratorStatus);

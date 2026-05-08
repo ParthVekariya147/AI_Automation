@@ -6,11 +6,12 @@ import { PublishJobModel } from "../models/PublishJob.js";
 import { InstagramAccountModel } from "../models/InstagramAccount.js";
 import { downloadDriveFileForPublish } from "./google-drive.service.js";
 import {
+  fetchCollaboratorStatus,
   postCarouselMedia,
   postReelsMedia,
   postSingleMedia,
   postVideoMedia,
-  resolveCollaboratorIds
+  sanitizeCollaborators
 } from "./instagram.service.js";
 import { ApiError } from "../utils/api-error.js";
 
@@ -83,7 +84,7 @@ export async function publishDraftById(
 
   const captionWithHashtags = `${draft.caption}\n\n${draft.hashtags.join(" ")}`.trim();
   const collaborators = draft.collaborators?.length
-    ? await resolveCollaboratorIds(account.igUserId, account.accessToken, draft.collaborators)
+    ? sanitizeCollaborators(draft.collaborators)
     : undefined;
 
   let externalPostId: string;
@@ -107,7 +108,7 @@ export async function publishDraftById(
     } else if (draft.postType === "carousel" || mediaAssets.length > 1) {
       const urls = await Promise.all(mediaAssets.map(resolvePublishUrl));
       ({ externalPostId, permalink } = await postCarouselMedia(
-        account.igUserId, account.accessToken, urls, captionWithHashtags
+        account.igUserId, account.accessToken, urls, captionWithHashtags, collaborators
       ));
     } else {
       const url = await resolvePublishUrl(mediaAssets[0]);
@@ -119,10 +120,49 @@ export async function publishDraftById(
     draft.status = "live";
     draft.igMediaId = externalPostId;
     draft.permalink = permalink;
+
+    if (collaborators?.length) {
+      try {
+        const collabStatuses = await fetchCollaboratorStatus(externalPostId, account.accessToken);
+        console.log("[IG] Collaborator status after publish:", JSON.stringify(collabStatuses));
+        draft.collaboratorStatus = collabStatuses.map((s) => ({ ...s, checkedAt: new Date() }));
+      } catch (e) {
+        console.warn("[IG] Could not fetch collaborator status:", e);
+      }
+    }
+
     await draft.save();
+
+    // If part of automation and this was the last pending draft, finish automation
+    if (draft.automationId) {
+      const { handleAutomationDraftCompleted } = await import("./folder-automation.service.js");
+      await handleAutomationDraftCompleted(draft.automationId.toString());
+    }
   } catch (error) {
-    draft.status = "error";
-    await draft.save();
+    draft.retryCount = (draft.retryCount || 0) + 1;
+
+    if (draft.retryCount < 2) {
+      // Reschedule +5min, keep status as "scheduled"
+      draft.status = "scheduled";
+      draft.scheduledFor = new Date(Date.now() + 5 * 60 * 1000);
+      await draft.save();
+      console.warn(`[publish] Draft ${draftId} failed (attempt ${draft.retryCount}/2), retrying in 5min`);
+    } else {
+      // Max retries hit → manual review
+      draft.status = "error";
+      draft.needsManualReview = true;
+      await draft.save();
+
+      // If part of automation, pause it
+      if (draft.automationId) {
+        const { FolderAutomation } = await import("../models/FolderAutomation.js");
+        await FolderAutomation.findByIdAndUpdate(draft.automationId, {
+          status: "manual_review",
+        });
+      }
+      console.error(`[publish] Draft ${draftId} failed after 2 retries, moved to manual review`);
+    }
+
     throw error;
   }
 

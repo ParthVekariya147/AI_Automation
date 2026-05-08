@@ -6,6 +6,7 @@ import { PublishJobModel } from "../models/PublishJob.js";
 import { createAuditLog } from "../services/audit.service.js";
 import { suggestHashtagsWithAI } from "../services/ai.service.js";
 import { publishDraftById } from "../services/publish.service.js";
+import { fetchCollaboratorStatus } from "../services/instagram.service.js";
 import { suggestSmartTime } from "../services/smart-timing.service.js";
 import type { AuthedRequest } from "../types.js";
 import { asyncHandler } from "../utils/async-handler.js";
@@ -214,6 +215,22 @@ export const updatePost = asyncHandler(async (req: AuthedRequest, res: Response)
 
   await draft.save();
   res.json({ success: true, data: draft });
+});
+
+export const getCollaboratorStatus = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const draft = await PostDraftModel.findById(req.params.id);
+  if (!draft) throw new ApiError(404, "Post draft not found");
+  if (!draft.igMediaId) throw new ApiError(400, "Post has not been published yet");
+
+  const account = await (await import("../models/InstagramAccount.js")).InstagramAccountModel.findById(draft.instagramAccountId);
+  if (!account?.accessToken) throw new ApiError(400, "Instagram account is not fully connected");
+
+  const statuses = await fetchCollaboratorStatus(draft.igMediaId, account.accessToken);
+
+  draft.collaboratorStatus = statuses.map((s) => ({ ...s, checkedAt: new Date() }));
+  await draft.save();
+
+  res.json({ success: true, data: draft.collaboratorStatus });
 });
 
 export const recordLikeSnapshot = asyncHandler(async (req: AuthedRequest, res: Response) => {

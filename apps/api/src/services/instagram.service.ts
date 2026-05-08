@@ -69,30 +69,69 @@ function buildFacebookGraphUrl(path: string, query: Record<string, string | unde
   return url.toString();
 }
 
-export async function resolveCollaboratorIds(
-  igUserId: string,
-  accessToken: string,
-  handles: string[]
-): Promise<string[]> {
-  const ids: string[] = [];
-  for (const handle of handles) {
-    try {
-      const url = buildFacebookGraphUrl(igUserId, {
-        fields: "business_discovery.fields(id,username)",
-        username: handle,
-        access_token: accessToken
-      });
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json() as Record<string, unknown>;
-      const discovery = data?.business_discovery as Record<string, unknown> | undefined;
-      const id = typeof discovery?.id === "string" ? discovery.id : undefined;
-      if (id) ids.push(id);
-    } catch {
-      // skip unresolvable handles
+async function postFacebookGraph(
+  path: string,
+  params: Record<string, string | undefined>
+): Promise<Response> {
+  const base = env.facebookGraphBaseUrl.endsWith("/")
+    ? env.facebookGraphBaseUrl
+    : `${env.facebookGraphBaseUrl}/`;
+  const url = new URL(path.replace(/^\/+/, ""), base);
+
+  const body = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      body.append(key, value);
     }
   }
-  return ids;
+
+  return fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString()
+  });
+}
+
+export function sanitizeCollaborators(raw: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const u of raw) {
+    const stripped = u.trim().replace(/^@/, "");
+    if (!stripped) continue;
+    if (/[\s"'<>]/.test(stripped)) {
+      console.warn(`[collaborators] skipping invalid username: "${u}"`);
+      continue;
+    }
+    if (!seen.has(stripped)) {
+      seen.add(stripped);
+      result.push(stripped);
+    }
+  }
+  if (result.length > 3) {
+    console.warn(`[collaborators] more than 3 provided — truncating to first 3`);
+    return result.slice(0, 3);
+  }
+  return result;
+}
+
+export async function fetchCollaboratorStatus(
+  igMediaId: string,
+  accessToken: string
+): Promise<Array<{ username: string; status: string }>> {
+  const url = buildFacebookGraphUrl(`${igMediaId}/collaborators`, {
+    access_token: accessToken
+  });
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await readJsonMap(res, "Instagram collaborator status");
+  const entries = data.data;
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter((e): e is Record<string, unknown> => Boolean(e) && typeof e === "object")
+    .map((e) => ({
+      username: typeof e.username === "string" ? e.username : String(e.id ?? ""),
+      status: typeof e.invite_status === "string" ? e.invite_status : "Unknown"
+    }));
 }
 
 export function ensureFacebookConfigured() {
@@ -354,22 +393,26 @@ export async function fetchConnectedInstagramAccounts(accessToken: string) {
 }
 
 export async function postSingleMedia(igUserId: string, accessToken: string, imageUrl: string, caption: string, collaborators?: string[]) {
-  const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
+  const containerParams: Record<string, string | undefined> = {
     image_url: imageUrl,
     caption,
     access_token: accessToken,
-    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
+    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+  };
+  console.log("[IG] postSingleMedia container params:", {
+    ...containerParams,
+    access_token: "***",
+    collaborators: containerParams.collaborators
   });
-  const createRes = await fetch(createUrl, { method: "POST" });
+  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
   if (!createRes.ok) throw new ApiError(400, `Failed to create media container: ${await createRes.text()}`);
   const createData = await readJsonMap(createRes, "Instagram media container creation");
   const containerId = readRequiredString(createData, "id", "Instagram media container creation");
 
-  const publishUrl = buildFacebookGraphUrl(`${igUserId}/media_publish`, {
+  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
     creation_id: containerId,
     access_token: accessToken
   });
-  const publishRes = await fetch(publishUrl, { method: "POST" });
   if (!publishRes.ok) throw new ApiError(400, `Failed to publish media: ${await publishRes.text()}`);
   const publishData = await readJsonMap(publishRes, "Instagram media publish");
   const externalPostId = readRequiredString(publishData, "id", "Instagram media publish");
@@ -386,14 +429,19 @@ export async function postSingleMedia(igUserId: string, accessToken: string, ima
 }
 
 export async function postVideoMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
-  const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
+  const containerParams: Record<string, string | undefined> = {
     video_url: videoUrl,
     media_type: "VIDEO",
     caption,
     access_token: accessToken,
-    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
+    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+  };
+  console.log("[IG] postVideoMedia container params:", {
+    ...containerParams,
+    access_token: "***",
+    collaborators: containerParams.collaborators
   });
-  const createRes = await fetch(createUrl, { method: "POST" });
+  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
   if (!createRes.ok) throw new ApiError(400, `Failed to create video container: ${await createRes.text()}`);
   const createData = await readJsonMap(createRes, "Instagram video container creation");
   const containerId = readRequiredString(createData, "id", "Instagram video container creation");
@@ -418,11 +466,10 @@ export async function postVideoMedia(igUserId: string, accessToken: string, vide
   }
   if (status !== "FINISHED") throw new ApiError(400, "Video processing timed out after 2 minutes.");
 
-  const publishUrl = buildFacebookGraphUrl(`${igUserId}/media_publish`, {
+  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
     creation_id: containerId,
     access_token: accessToken
   });
-  const publishRes = await fetch(publishUrl, { method: "POST" });
   if (!publishRes.ok) throw new ApiError(400, `Failed to publish video: ${await publishRes.text()}`);
   const publishData = await readJsonMap(publishRes, "Instagram video publish");
   const externalPostId = readRequiredString(publishData, "id", "Instagram video publish");
@@ -439,14 +486,19 @@ export async function postVideoMedia(igUserId: string, accessToken: string, vide
 }
 
 export async function postReelsMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
-  const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
+  const containerParams: Record<string, string | undefined> = {
     video_url: videoUrl,
     media_type: "REELS",
     caption,
     access_token: accessToken,
-    ...(collaborators?.length ? { collaborator_tags: JSON.stringify(collaborators) } : {})
+    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+  };
+  console.log("[IG] postReelsMedia container params:", {
+    ...containerParams,
+    access_token: "***",
+    collaborators: containerParams.collaborators
   });
-  const createRes = await fetch(createUrl, { method: "POST" });
+  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
   if (!createRes.ok) throw new ApiError(400, `Failed to create Reels container: ${await createRes.text()}`);
   const createData = await readJsonMap(createRes, "Instagram Reels container creation");
   const containerId = readRequiredString(createData, "id", "Instagram Reels container creation");
@@ -469,11 +521,10 @@ export async function postReelsMedia(igUserId: string, accessToken: string, vide
   }
   if (status !== "FINISHED") throw new ApiError(400, "Reels processing timed out after 2 minutes.");
 
-  const publishUrl = buildFacebookGraphUrl(`${igUserId}/media_publish`, {
+  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
     creation_id: containerId,
     access_token: accessToken
   });
-  const publishRes = await fetch(publishUrl, { method: "POST" });
   if (!publishRes.ok) throw new ApiError(400, `Failed to publish Reels: ${await publishRes.text()}`);
   const publishData = await readJsonMap(publishRes, "Instagram Reels publish");
   const externalPostId = readRequiredString(publishData, "id", "Instagram Reels publish");
@@ -489,38 +540,42 @@ export async function postReelsMedia(igUserId: string, accessToken: string, vide
   return { externalPostId, permalink };
 }
 
-export async function postCarouselMedia(igUserId: string, accessToken: string, imageUrls: string[], caption: string) {
+export async function postCarouselMedia(igUserId: string, accessToken: string, imageUrls: string[], caption: string, collaborators?: string[]) {
   const childIds: string[] = [];
 
   for (const url of imageUrls) {
-    const createChildUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
+    const createChildRes = await postFacebookGraph(`${igUserId}/media`, {
       image_url: url,
       is_carousel_item: "true",
       access_token: accessToken
     });
-    const createChildRes = await fetch(createChildUrl, { method: "POST" });
     if (!createChildRes.ok) throw new ApiError(400, `Failed to create carousel child: ${await createChildRes.text()}`);
     const createChildData = await readJsonMap(createChildRes, "Instagram carousel child creation");
     const childId = readRequiredString(createChildData, "id", "Instagram carousel child creation");
     childIds.push(childId);
   }
 
-  const createUrl = buildFacebookGraphUrl(`${igUserId}/media`, {
+  const parentParams: Record<string, string | undefined> = {
     media_type: "CAROUSEL",
     children: childIds.join(","),
     caption,
-    access_token: accessToken
+    access_token: accessToken,
+    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+  };
+  console.log("[IG] postCarouselMedia parent container params:", {
+    ...parentParams,
+    access_token: "***",
+    collaborators: parentParams.collaborators
   });
-  const createRes = await fetch(createUrl, { method: "POST" });
+  const createRes = await postFacebookGraph(`${igUserId}/media`, parentParams);
   if (!createRes.ok) throw new ApiError(400, `Failed to create carousel container: ${await createRes.text()}`);
   const createData = await readJsonMap(createRes, "Instagram carousel container creation");
   const containerId = readRequiredString(createData, "id", "Instagram carousel container creation");
 
-  const publishUrl = buildFacebookGraphUrl(`${igUserId}/media_publish`, {
+  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
     creation_id: containerId,
     access_token: accessToken
   });
-  const publishRes = await fetch(publishUrl, { method: "POST" });
   if (!publishRes.ok) throw new ApiError(400, `Failed to publish carousel: ${await publishRes.text()}`);
   const publishData = await readJsonMap(publishRes, "Instagram carousel publish");
   const externalPostId = readRequiredString(publishData, "id", "Instagram carousel publish");

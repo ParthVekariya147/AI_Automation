@@ -49,7 +49,8 @@ export const env = {
   facebookGraphBaseUrl: `https://graph.facebook.com/${parsed.data.FACEBOOK_GRAPH_API_VERSION}`,
   facebookDialogBaseUrl: `https://www.facebook.com/${parsed.data.FACEBOOK_GRAPH_API_VERSION}/dialog/oauth`,
   googleDriveScopes: parsed.data.GOOGLE_DRIVE_SCOPES.split(/\s+/).filter(Boolean),
-  geminiConfigured: Boolean(parsed.data.GEMINI_API_KEY),
+  geminiConfigured: Boolean(parsed.data.GEMINI_API_KEY) ||
+    Object.keys(process.env).some((k) => k.startsWith("GEMINI_API_KEY") && process.env[k]?.trim()),
   googleConfigured: Boolean(parsed.data.GOOGLE_CLIENT_ID && parsed.data.GOOGLE_CLIENT_SECRET),
   facebookConfigured: Boolean(parsed.data.FACEBOOK_APP_ID && parsed.data.FACEBOOK_APP_SECRET)
 };
