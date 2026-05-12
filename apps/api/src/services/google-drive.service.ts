@@ -451,18 +451,69 @@ export async function downloadDriveFileForPublish(
   return publicUrl;
 }
 
+export async function makeFilePublicForPublish(
+  connectionId: string,
+  driveFileId: string
+): Promise<{ downloadUrl: string; permissionId: string }> {
+  const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+  const drive = google.drive({ version: "v3", auth: oauth2Client });
+
+  const permission = await drive.permissions.create({
+    fileId: driveFileId,
+    requestBody: { role: "reader", type: "anyone" },
+    fields: "id",
+    supportsAllDrives: true
+  });
+
+  const permissionId = permission.data.id;
+  if (!permissionId) throw new ApiError(500, "Drive did not return a permission ID");
+
+  const downloadUrl = `https://drive.google.com/uc?id=${encodeURIComponent(driveFileId)}&export=download`;
+  return { downloadUrl, permissionId };
+}
+
+export async function revokeFilePublicAccess(
+  connectionId: string,
+  driveFileId: string,
+  permissionId: string
+): Promise<void> {
+  try {
+    const { oauth2Client } = await hydrateGoogleDriveToken(connectionId);
+    const drive = google.drive({ version: "v3", auth: oauth2Client });
+    await drive.permissions.delete({
+      fileId: driveFileId,
+      permissionId,
+      supportsAllDrives: true
+    });
+  } catch (err) {
+    console.warn(`[Drive] Could not revoke permission ${permissionId} on ${driveFileId}:`, err);
+  }
+}
+
 export async function fetchGoogleProfile(authCode: string) {
   const oauth2Client = createGoogleOAuthClient();
   const { tokens } = await oauth2Client.getToken(authCode);
   oauth2Client.setCredentials(tokens);
 
-  const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-  const profile = await oauth2.userinfo.get();
+  let email = "";
+  try {
+    const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+    const profile = await oauth2.userinfo.get();
+    email = profile.data.email ?? "";
+  } catch {
+    // userinfo.email scope not granted — derive a stable identifier from the token
+    const idToken = tokens.id_token;
+    if (idToken) {
+      try {
+        const payload = JSON.parse(Buffer.from(idToken.split(".")[1], "base64").toString());
+        email = payload.email ?? payload.sub ?? "unknown";
+      } catch {
+        email = "unknown";
+      }
+    }
+  }
 
-  return {
-    tokens,
-    email: profile.data.email ?? ""
-  };
+  return { tokens, email };
 }
 
 export async function fetchDriveFilePreview(connectionId: string, fileId: string) {

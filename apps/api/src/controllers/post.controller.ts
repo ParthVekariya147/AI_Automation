@@ -217,6 +217,22 @@ export const updatePost = asyncHandler(async (req: AuthedRequest, res: Response)
   res.json({ success: true, data: draft });
 });
 
+export const approveAndSchedule = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  const draft = await PostDraftModel.findById(req.params.id);
+  if (!draft) throw new ApiError(404, "Post draft not found");
+  if (draft.status !== "manual_review") throw new ApiError(400, "Post is not in manual_review status");
+
+  const { scheduledFor } = z.object({ scheduledFor: z.string().datetime().optional() }).parse(req.body);
+  const smartTiming = await suggestSmartTime(draft.businessId.toString());
+
+  draft.scheduledFor = scheduledFor ? new Date(scheduledFor) : smartTiming.suggestedFor;
+  draft.status = "scheduled";
+  draft.needsManualReview = false;
+  await draft.save();
+
+  res.json({ success: true, data: draft });
+});
+
 export const getCollaboratorStatus = asyncHandler(async (req: AuthedRequest, res: Response) => {
   const draft = await PostDraftModel.findById(req.params.id);
   if (!draft) throw new ApiError(404, "Post draft not found");

@@ -27,7 +27,7 @@ const importFromDriveSchema = z.object({
 });
 
 const updateMediaSchema = z.object({
-  workflowStatus: z.enum(["new", "scheduled", "posting", "live", "error"]).optional(),
+  workflowStatus: z.enum(["new", "scheduled", "posting", "live", "error", "manual_review"]).optional(),
   groupId: z.string().trim().optional().nullable(),
   postType: z.enum(["single", "carousel", "video", "reel"]).optional(),
   scheduledTime: z.string().datetime().optional().nullable(),
@@ -422,6 +422,10 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
 
   asset.aiCaption = generated.caption;
   if (generated.hashtags?.length) asset.hashtags = generated.hashtags;
+  asset.captionStatus = "done";
+  asset.failedAttempts = 0;
+  asset.failedReason = undefined;
+  if (asset.workflowStatus === "manual_review") asset.workflowStatus = "new";
   await asset.save();
 
   await createAuditLog({

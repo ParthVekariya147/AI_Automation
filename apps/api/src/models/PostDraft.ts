@@ -25,6 +25,9 @@ export interface PostDraftEntity {
   automationId?: Schema.Types.ObjectId;
   retryCount: number;
   needsManualReview: boolean;
+  lastError?: string;
+  livePostThumbnailUrl?: string;
+  livePostFetchedAt?: Date;
 }
 
 const postDraftSchema = new Schema<PostDraftEntity>(
@@ -45,7 +48,7 @@ const postDraftSchema = new Schema<PostDraftEntity>(
     scheduledFor: { type: Date },
     status: {
       type: String,
-      enum: ["new", "scheduled", "posting", "live", "error"],
+      enum: ["new", "scheduled", "posting", "live", "error", "manual_review"],
       default: "new"
     },
     postType: {
@@ -70,7 +73,10 @@ const postDraftSchema = new Schema<PostDraftEntity>(
     driveUploadRequested: { type: Boolean, default: false },
     automationId: { type: Schema.Types.ObjectId, ref: "FolderAutomation", index: true },
     retryCount: { type: Number, default: 0 },
-    needsManualReview: { type: Boolean, default: false, index: true }
+    needsManualReview: { type: Boolean, default: false, index: true },
+    lastError: { type: String, trim: true },
+    livePostThumbnailUrl: { type: String, trim: true },
+    livePostFetchedAt: { type: Date },
   },
   { timestamps: true }
 );

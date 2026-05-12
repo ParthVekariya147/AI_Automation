@@ -17,7 +17,14 @@ export interface MediaAssetEntity {
   driveFileId?: string;
   driveFolderId?: string;
   status: "ready" | "processing" | "failed";
-  workflowStatus: "new" | "scheduled" | "posting" | "live" | "error";
+  workflowStatus: "new" | "scheduled" | "posting" | "live" | "error" | "manual_review";
+  captionStatus: "pending" | "processing" | "done" | "failed";
+  failedAttempts: number;
+  failedReason?: string;
+  fittedFilePath?: string;
+  fittedPublicUrl?: string;
+  fitDimensions?: { width: number; height: number; wasFitted: boolean };
+  automationId?: Schema.Types.ObjectId;
   groupId?: string;
   postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: Date;
@@ -60,9 +67,24 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
     },
     workflowStatus: {
       type: String,
-      enum: ["new", "scheduled", "posting", "live", "error"],
+      enum: ["new", "scheduled", "posting", "live", "error", "manual_review"],
       default: "new"
     },
+    captionStatus: {
+      type: String,
+      enum: ["pending", "processing", "done", "failed"],
+      default: "pending",
+    },
+    failedAttempts: { type: Number, default: 0 },
+    failedReason: { type: String, trim: true },
+    fittedFilePath: { type: String, trim: true },
+    fittedPublicUrl: { type: String, trim: true },
+    fitDimensions: {
+      width: Number,
+      height: Number,
+      wasFitted: Boolean,
+    },
+    automationId: { type: Schema.Types.ObjectId, ref: "FolderAutomation", index: true, default: null },
     groupId: { type: String, trim: true },
     postType: {
       type: String,

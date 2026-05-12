@@ -48,6 +48,15 @@ async function findNextAvailablePort(startPort: number, maxChecks = 20) {
 async function start() {
   console.log("Starting API bootstrap...");
   await connectDatabase();
+
+  const publicUrl = env.PUBLIC_API_URL ?? "";
+  if (!publicUrl || !publicUrl.startsWith("https://")) {
+    console.warn(
+      "[startup] PUBLIC_API_URL is not HTTPS — Instagram publishing will fail.\n" +
+      "         Run ./start.sh to start the Cloudflare tunnel, or set a valid public HTTPS URL in apps/api/.env."
+    );
+  }
+
   startScheduler();
   const interfaces = Object.values(os.networkInterfaces())
     .flat()

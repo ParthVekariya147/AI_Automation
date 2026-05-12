@@ -21,6 +21,9 @@ export interface SessionUser {
   globalRole: Role;
 }
 
+export type WorkflowStatus = "new" | "scheduled" | "posting" | "live" | "error" | "manual_review";
+export type CaptionStatus = "pending" | "processing" | "done" | "failed";
+
 export interface MediaAsset {
   _id: string;
   originalName: string;
@@ -29,7 +32,13 @@ export interface MediaAsset {
   folderName?: string;
   source: "local" | "google_drive" | "instagram_direct";
   mediaType: "image" | "video";
-  workflowStatus: "new" | "scheduled" | "posting" | "live" | "error";
+  workflowStatus: WorkflowStatus;
+  captionStatus?: CaptionStatus;
+  failedAttempts?: number;
+  failedReason?: string;
+  fittedPublicUrl?: string;
+  fitDimensions?: { width: number; height: number; wasFitted: boolean };
+  automationId?: string;
   groupId?: string;
   postType: "single" | "carousel" | "video" | "reel";
   scheduledTime?: string;
@@ -71,7 +80,7 @@ export interface PostDraft {
   caption: string;
   hashtags?: string[];
   collaborators?: string[];
-  status: "new" | "scheduled" | "posting" | "live" | "error";
+  status: "new" | "scheduled" | "posting" | "live" | "error" | "manual_review";
   postType?: "single" | "carousel" | "video" | "reel";
   scheduledFor?: string; // ISO 8601
   smartTimingSuggestedFor?: string;
@@ -82,7 +91,9 @@ export interface PostDraft {
   updatedAt: string;
   needsManualReview?: boolean;
   retryCount?: number;
+  lastError?: string;
   automationId?: string;
+  livePostThumbnailUrl?: string;
   instagramAccountId?: {
     _id: string;
     name: string;
@@ -99,8 +110,8 @@ export interface PostDraft {
   }>;
 }
 
-export type GroupingMode = "subfolder" | "filename_prefix" | "manual" | "batch_size";
-export type CadenceType = "fixed_time" | "slots" | "smart" | "interval";
+export type GroupingMode = "one_per_file" | "batch_size" | "subfolder";
+export type CadenceMode = "interval" | "daily_slots" | "smart";
 export type AutomationStatus = "idle" | "running" | "finished" | "paused" | "manual_review";
 
 export interface FolderAutomation {
@@ -113,12 +124,10 @@ export interface FolderAutomation {
   groupingMode: GroupingMode;
   batchSize: number;
   carouselMaxSize: number;
-  cadence: {
-    type: CadenceType;
-    fixedTime?: string;
-    slots?: string[];
-    intervalHours?: number;
-  };
+  cadenceMode: CadenceMode;
+  intervalValue?: number;
+  intervalUnit?: "minutes" | "hours" | "days";
+  dailySlots?: string[];
   brandVoice?: string;
   useEmojis: boolean;
   reprocessImported: boolean;
@@ -126,6 +135,7 @@ export interface FolderAutomation {
   priority: number;
   lastFetchedAt?: string;
   finishedAt?: string;
+  lastRunError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -143,10 +153,13 @@ export interface AutomationRun {
 }
 
 export interface AutomationPreview {
-  fileCount: number;
+  totalFound: number;
+  alreadyImported: number;
+  newFiles: number;
   groupCount: number;
   groups: {
-    files: { name: string; mediaType: "image" | "video" }[];
+    groupId: string;
+    files: { name: string; mediaType: "image" | "video"; previewUrl: string | null; driveFileId: string }[];
     scheduledFor: string;
     postType: "single" | "carousel" | "video" | "reel";
   }[];

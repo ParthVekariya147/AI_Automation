@@ -4,26 +4,51 @@ import { env } from "../config/env.js";
 
 // ── API Key Manager ──────────────────────────────────────────────────────────
 
-const ALL_GEMINI_KEYS = Object.keys(process.env)
-  .filter((k) => k.startsWith("GEMINI_API_KEY"))
-  .map((k) => process.env[k]?.trim() ?? "")
-  .filter(Boolean);
-
-if (ALL_GEMINI_KEYS.length === 0 && env.GEMINI_API_KEY) {
-  ALL_GEMINI_KEYS.push(env.GEMINI_API_KEY);
+function loadGeminiKeys(): string[] {
+  // Collect from ALL env vars starting with GEMINI_API_KEY (handles GEMINI_API_KEY,
+  // GEMINI_API_KEY1, GEMINI_API_KEYS, GEMINI_API_KEYS2, GEMINI_API_KEYS3, etc.)
+  const seen = new Set<string>();
+  const keys: string[] = [];
+  Object.keys(process.env)
+    .filter((k) => k.startsWith("GEMINI_API_KEY"))
+    .sort()
+    .forEach((k) => {
+      for (const val of (process.env[k] ?? "").split(",").map((s) => s.trim()).filter(Boolean)) {
+        if (!seen.has(val)) { seen.add(val); keys.push(val); }
+      }
+    });
+  return keys;
 }
 
+type KeyEntry = { key: string; cooldownUntil: number };
+
 class ApiKeyManager {
-  private keys: string[];
+  private keys: KeyEntry[];
   public currentIndex = 0;
 
   constructor(keys: string[]) {
-    this.keys = keys;
+    this.keys = keys.map((key) => ({ key, cooldownUntil: 0 }));
     console.log(`[AI Service] Loaded ${this.keys.length} Gemini API key(s).`);
   }
 
+  /** Returns the key at currentIndex if not on cooldown, else "". */
   current(): string {
-    return this.keys[this.currentIndex] ?? "";
+    const entry = this.keys[this.currentIndex];
+    if (!entry || entry.cooldownUntil > Date.now()) return "";
+    return entry.key;
+  }
+
+  /** Find next available (non-cooled) key; updates currentIndex. Returns null if all cooled. */
+  acquireAny(): string | null {
+    const now = Date.now();
+    for (let i = 0; i < this.keys.length; i++) {
+      const idx = (this.currentIndex + i) % this.keys.length;
+      if (this.keys[idx].cooldownUntil <= now) {
+        this.currentIndex = idx;
+        return this.keys[idx].key;
+      }
+    }
+    return null;
   }
 
   rotate() {
@@ -33,12 +58,38 @@ class ApiKeyManager {
     }
   }
 
+  /** Mark currentIndex key as rate-limited; also rotates to next. */
+  markCurrentRateLimited(cooldownMs = 60_000) {
+    const entry = this.keys[this.currentIndex];
+    if (entry) {
+      entry.cooldownUntil = Date.now() + cooldownMs;
+      console.log(`[AI Service] Key ${this.currentIndex} rate-limited for ${cooldownMs}ms.`);
+    }
+    this.rotate();
+  }
+
+  /** Returns how many keys are currently off cooldown (available right now). */
+  availableNow(): number {
+    const now = Date.now();
+    return this.keys.filter((k) => k.cooldownUntil <= now).length;
+  }
+
   get count() {
     return this.keys.length;
   }
 }
 
-const keyManager = new ApiKeyManager(ALL_GEMINI_KEYS);
+const keyManager = new ApiKeyManager(loadGeminiKeys());
+
+/** Exported so automation service can size batches to key pool. */
+export function getGeminiKeyCount(): number {
+  return keyManager.count;
+}
+
+/** Returns how many keys are currently available (not on cooldown). */
+export function getGeminiAvailableCount(): number {
+  return keyManager.availableNow();
+}
 
 // ── Gemini fetch with automatic key rotation ─────────────────────────────────
 
@@ -51,34 +102,36 @@ type GeminiResponse = {
 
 async function callGemini(fetchFn: (apiKey: string) => Promise<any>): Promise<any> {
   const maxAttempts = Math.max(keyManager.count, 1);
-  let lastError: unknown;
 
   for (let i = 0; i < maxAttempts; i++) {
-    const key = keyManager.current();
-    if (!key) throw new Error("No Gemini API keys configured in environment.");
+    const key = keyManager.acquireAny();
+    if (!key) break; // all remaining keys are on cooldown
 
     try {
       return await fetchFn(key);
     } catch (err: any) {
-      lastError = err;
-      const isRetryable =
-        err?.status === 400 ||
+      const isRateLimit =
         err?.status === 429 ||
         err?.status === 503 ||
-        String(err?.message).includes("API_KEY_INVALID") ||
         String(err?.message).includes("quota") ||
-        String(err?.message).includes("overloaded");
+        String(err?.message).includes("overloaded") ||
+        String(err?.message).includes("RESOURCE_EXHAUSTED");
+      const isInvalidKey =
+        err?.status === 400 ||
+        String(err?.message).includes("API_KEY_INVALID");
 
-      if (isRetryable && keyManager.count > 1) {
-        console.warn(`[AI Service] Key ${keyManager.currentIndex} failed (${err?.status ?? err?.message}). Rotating…`);
-        keyManager.rotate();
+      if (isRateLimit || isInvalidKey) {
+        const cooldownMs = isRateLimit ? 60_000 : 30_000;
+        console.warn(`[AI Service] Key ${keyManager.currentIndex} failed (${err?.status ?? err?.message}). Cooling down ${cooldownMs}ms — trying next key…`);
+        keyManager.markCurrentRateLimited(cooldownMs);
+        // loop continues to next available key — no sleep
       } else {
-        throw err;
+        throw err; // non-quota error (network, parse, etc.) — fail immediately
       }
     }
   }
 
-  throw lastError;
+  throw new Error("All Gemini API keys are rate-limited. Try again later.");
 }
 
 function geminiEndpoint(apiKey: string, model = "gemini-2.5-flash"): string {
@@ -247,7 +300,7 @@ export interface GenerateInstagramCaptionOutput {
 export async function generateInstagramCaptionFromMedia(
   input: GenerateInstagramCaptionInput
 ): Promise<GenerateInstagramCaptionOutput> {
-  if (!keyManager.current()) {
+  if (keyManager.count === 0) {
     throw new Error("No Gemini API keys configured in environment.");
   }
 
@@ -303,7 +356,7 @@ export async function generateCaptionForCarousel(input: {
   mimeTypes: string[];
   brandVoice?: string;
 }): Promise<GenerateInstagramCaptionOutput> {
-  if (!keyManager.current()) {
+  if (keyManager.count === 0) {
     throw new Error("No Gemini API keys configured in environment.");
   }
 
@@ -373,7 +426,7 @@ export async function generateCaptionForCarousel(input: {
 }
 
 export async function suggestHashtagsWithAI(caption: string): Promise<string[]> {
-  if (!keyManager.current() || !caption.trim()) {
+  if (keyManager.count === 0 || !caption.trim()) {
     return suggestHashtagsFromCaption(caption);
   }
 

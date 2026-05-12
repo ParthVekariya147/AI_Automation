@@ -1,10 +1,11 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
 import { ConfirmDialog } from "../components/queue/ConfirmDialog";
 import { CountdownBadge } from "../components/queue/CountdownBadge";
+import { HashtagInput } from "../components/queue/HashtagInput";
 import { SchedulePicker } from "../components/queue/SchedulePicker";
 import { api } from "../lib/api";
 import { extractApiError } from "../lib/errors";
@@ -19,17 +20,19 @@ const STATUS_RING: Record<string, string> = {
   posting: "ring-amber-400",
   live: "ring-emerald-500",
   error: "ring-red-400",
+  manual_review: "ring-orange-400",
 };
 
 const STATUS_BADGE: Record<string, { bg: string; color: string }> = {
-  new:       { bg: "var(--bg)",        color: "var(--ink-2)" },
-  scheduled: { bg: "var(--info-soft)", color: "var(--info)" },
-  posting:   { bg: "var(--warn-soft)", color: "var(--warn)" },
-  live:      { bg: "var(--ok-soft)",   color: "var(--ok)" },
-  error:     { bg: "var(--err-soft)",  color: "var(--err)" },
+  new:           { bg: "var(--bg)",        color: "var(--ink-2)" },
+  scheduled:     { bg: "var(--info-soft)", color: "var(--info)" },
+  posting:       { bg: "var(--warn-soft)", color: "var(--warn)" },
+  live:          { bg: "var(--ok-soft)",   color: "var(--ok)" },
+  error:         { bg: "var(--err-soft)",  color: "var(--err)" },
+  manual_review: { bg: "#fff3e0",          color: "#e65100" },
 };
 
-const STATUS_FILTERS = ["all", "new", "scheduled", "posting", "live", "error"] as const;
+const STATUS_FILTERS = ["all", "new", "scheduled", "posting", "live", "error", "manual_review"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
 type ViewMode = "small" | "medium" | "large" | "list";
 
@@ -43,6 +46,7 @@ const gridClass: Record<ViewMode, string> = {
 export function QueuePage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
 
   const [search, setSearch] = useState("");
@@ -147,6 +151,17 @@ export function QueuePage() {
     }
   }
 
+  async function retryCaption(id: string) {
+    if (!activeBusinessId) return;
+    try {
+      await api.post(`/media/${id}/generate-caption`, { businessId: activeBusinessId });
+      queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+      toast({ tone: "success", title: "Caption regenerated" });
+    } catch (error) {
+      toast({ tone: "error", title: "Retry failed", description: extractApiError(error, "Could not retry caption.") });
+    }
+  }
+
   async function applyBulkGroupId() {
     if (!activeBusinessId || !selectedIds.length) return;
     setIsApplyingBulk(true);
@@ -208,12 +223,14 @@ export function QueuePage() {
 
   const tabs = STATUS_FILTERS.map((s) => ({
     id: s,
-    label: s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1),
+    label: s === "all" ? "All"
+         : s === "manual_review" ? "Manual Review"
+         : s.charAt(0).toUpperCase() + s.slice(1),
     count: counts[s] ?? 0,
   }));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <ConfirmDialog
         open={Boolean(confirmDelete)}
         title={`Remove "${confirmDelete?.name}"?`}
@@ -345,7 +362,7 @@ export function QueuePage() {
       {/* Content grid / list */}
       {filtered.length === 0 ? (
         <div
-          className="rounded-[18px] border-2 border-dashed p-16 text-center"
+          className="rounded-[14px] border-2 border-dashed p-10 text-center"
           style={{ borderColor: "var(--line-2)", background: "var(--bg)" }}
         >
           <p className="text-sm font-semibold" style={{ color: "var(--ink-2)" }}>No media in queue</p>
@@ -367,6 +384,17 @@ export function QueuePage() {
                 onEdit={() => setEditItem(item)}
                 onDelete={() => setConfirmDelete({ id: item._id, name: item.originalName })}
                 onPatch={(payload) => patchRow(item._id, payload)}
+                onRetryCaption={item.workflowStatus === "manual_review" ? () => retryCaption(item._id) : undefined}
+                onOpenInPosts={() =>
+                  navigate("/posts", {
+                    state: {
+                      mediaIds: [item._id],
+                      postType: item.postType,
+                      aiCaption: item.aiCaption,
+                      groupId: item.groupId,
+                    },
+                  })
+                }
               />
             ) : (
               <QueueCard
@@ -385,7 +413,7 @@ export function QueuePage() {
       )}
 
       <Panel title="Queue tips" description="How the workflow is structured.">
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-3">
           <Tip
             title="Carousel logic"
             body="Give the same Group ID to multiple images. They'll be posted as a carousel."
@@ -487,7 +515,7 @@ function QueueCard({
   return (
     <div className="flex flex-col gap-1.5">
       <div
-        className={`group relative aspect-square overflow-hidden rounded-2xl ring-2 ring-offset-2 ${STATUS_RING[item.workflowStatus] ?? "ring-slate-200"}`}
+        className={`relative aspect-square overflow-hidden rounded-2xl ring-2 ring-offset-2 ${STATUS_RING[item.workflowStatus] ?? "ring-slate-200"}`}
       >
         {item.postType && item.postType !== "single" && (
           <div className="absolute left-2 top-2 z-20 rounded-full bg-black/50 px-2 py-0.5 text-[10px] font-semibold uppercase text-white backdrop-blur-sm">
@@ -534,22 +562,24 @@ function QueueCard({
           </div>
         )}
 
+        {/* Always-visible action strip */}
         <div
-          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          className="absolute bottom-0 left-0 right-0 z-10 flex items-center justify-center gap-1.5 px-2 py-2"
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 100%)" }}
           onClick={(e) => e.stopPropagation()}
         >
-          <Link to={`/queue/${item._id}`} className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow hover:bg-white">
+          <Link to={`/queue/${item._id}`} className="rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-800 shadow">
             Open
           </Link>
-          <button onClick={onEdit} className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-white/30">
+          <button onClick={onEdit} className="rounded-full bg-white/20 px-2 py-1 text-[10px] font-semibold text-white shadow">
             Edit
           </button>
           <button
             onClick={onDelete}
             disabled={deletingId === item._id}
-            className="rounded-full bg-red-500/80 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-red-500 disabled:opacity-60"
+            className="rounded-full bg-red-500/80 px-2 py-1 text-[10px] font-semibold text-white shadow disabled:opacity-60"
           >
-            {deletingId === item._id ? "…" : "Remove"}
+            {deletingId === item._id ? "…" : "✕"}
           </button>
         </div>
       </div>
@@ -588,6 +618,8 @@ function QueueListCard({
   onEdit,
   onDelete,
   onPatch,
+  onOpenInPosts,
+  onRetryCaption,
 }: {
   item: MediaAsset;
   selected: boolean;
@@ -596,6 +628,8 @@ function QueueListCard({
   onEdit: () => void;
   onDelete: () => void;
   onPatch?: (payload: Record<string, unknown>) => void;
+  onOpenInPosts?: () => void;
+  onRetryCaption?: () => void;
 }) {
   const previewUrl = getMediaPreviewUrl(item);
   const [showStatus, setShowStatus] = useState(false);
@@ -736,11 +770,29 @@ function QueueListCard({
       </div>
 
       <div
-        className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100"
+        className="flex shrink-0 items-center gap-2"
         onClick={(e) => e.stopPropagation()}
       >
         <Link to={`/queue/${item._id}`} className="btn-secondary text-[11px]">Open</Link>
         <button onClick={onEdit} className="btn-secondary text-[11px]">Edit</button>
+        {onOpenInPosts && (
+          <button
+            onClick={onOpenInPosts}
+            className="btn-secondary text-[11px]"
+            style={{ color: "var(--accent)" }}
+          >
+            → Posts
+          </button>
+        )}
+        {item.workflowStatus === "manual_review" && onRetryCaption && (
+          <button
+            onClick={onRetryCaption}
+            className="btn-secondary text-[11px]"
+            style={{ color: "#e65100", borderColor: "#e65100" }}
+          >
+            Retry Caption
+          </button>
+        )}
         <button
           onClick={onDelete}
           disabled={deletingId === item._id}
@@ -765,12 +817,15 @@ function EditDrawer({
   onClose: () => void;
   onSave: (payload: Record<string, unknown>) => void;
 }) {
+  const navigate = useNavigate();
   const [workflowStatus, setWorkflowStatus] = useState(item.workflowStatus);
   const [postType, setPostType] = useState<"single" | "carousel" | "video" | "reel">(
     item.postType ?? "single"
   );
   const [groupId, setGroupId] = useState(item.groupId ?? "");
   const [scheduledTime, setScheduledTime] = useState<string | null>(item.scheduledTime ?? null);
+  const [aiCaption, setAiCaption] = useState(item.aiCaption ?? "");
+  const [hashtags, setHashtags] = useState<string[]>(item.hashtags ?? []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -781,7 +836,26 @@ function EditDrawer({
   }, [onClose]);
 
   function handleSave() {
-    onSave({ workflowStatus, postType, groupId: groupId.trim() || null, scheduledTime });
+    onSave({
+      workflowStatus,
+      postType,
+      groupId: groupId.trim() || null,
+      scheduledTime,
+      aiCaption: aiCaption.trim(),
+      hashtags,
+    });
+  }
+
+  function openInPosts() {
+    onClose();
+    navigate("/posts", {
+      state: {
+        mediaIds: [item._id],
+        postType,
+        aiCaption: aiCaption.trim() || item.aiCaption,
+        groupId: groupId.trim() || item.groupId,
+      },
+    });
   }
 
   return (
@@ -868,12 +942,41 @@ function EditDrawer({
               <p className="section-eyebrow mb-2">Schedule</p>
               <SchedulePicker value={scheduledTime} onChange={(iso) => setScheduledTime(iso ?? null)} />
             </section>
+
+            <section>
+              <p className="section-eyebrow mb-2">Caption</p>
+              <textarea
+                rows={4}
+                value={aiCaption}
+                onChange={(e) => setAiCaption(e.target.value)}
+                placeholder="Write a caption…"
+                className="input w-full resize-none"
+                style={{ fontFamily: "inherit", fontSize: "13px", lineHeight: "1.5" }}
+              />
+              <p className="mt-1 text-right text-[10px]" style={{ color: "var(--muted)" }}>
+                {aiCaption.length}/2200
+              </p>
+            </section>
+
+            <section>
+              <p className="section-eyebrow mb-2">Hashtags</p>
+              <HashtagInput tags={hashtags} onChange={setHashtags} />
+            </section>
           </div>
         </div>
 
-        <div className="flex gap-3 px-6 py-4" style={{ borderTop: "1px solid var(--line)" }}>
-          <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
-          <button onClick={handleSave} className="btn-primary flex-1 justify-center">Save Changes</button>
+        <div className="flex flex-col gap-2 px-6 py-4" style={{ borderTop: "1px solid var(--line)" }}>
+          <button
+            onClick={openInPosts}
+            className="btn-secondary w-full justify-center"
+            style={{ color: "var(--accent)" }}
+          >
+            Open in Posts →
+          </button>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="btn-secondary flex-1 justify-center">Cancel</button>
+            <button onClick={handleSave} className="btn-primary flex-1 justify-center">Save Changes</button>
+          </div>
         </div>
       </div>
     </div>
@@ -884,9 +987,9 @@ function EditDrawer({
 
 function Tip({ title, body }: { title: string; body: string }) {
   return (
-    <div className="rounded-[14px] p-5" style={{ background: "var(--bg)" }}>
-      <h4 className="text-base font-semibold" style={{ color: "var(--ink)" }}>{title}</h4>
-      <p className="mt-2 text-sm leading-6" style={{ color: "var(--ink-2)" }}>{body}</p>
+    <div className="rounded-[12px] p-3.5" style={{ background: "var(--bg)" }}>
+      <h4 className="text-sm font-semibold" style={{ color: "var(--ink)" }}>{title}</h4>
+      <p className="mt-1 text-xs leading-5" style={{ color: "var(--ink-2)" }}>{body}</p>
     </div>
   );
 }

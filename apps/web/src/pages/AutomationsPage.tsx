@@ -70,12 +70,11 @@ export function AutomationsPage() {
     return ig?.handle || "Unknown IG";
   }
 
-  function getCadenceLabel(c: FolderAutomation["cadence"]) {
-    if (c.type === "smart") return "Smart timing";
-    if (c.type === "interval") return `Every ${c.intervalHours}h`;
-    if (c.type === "fixed_time") return `Daily ${c.fixedTime}`;
-    if (c.type === "slots") return `Slots: ${c.slots?.join(", ")}`;
-    return c.type;
+  function getCadenceLabel(a: FolderAutomation) {
+    if (a.cadenceMode === "smart") return "Smart timing";
+    if (a.cadenceMode === "interval") return `Every ${a.intervalValue} ${a.intervalUnit ?? "h"}`;
+    if (a.cadenceMode === "daily_slots") return `Daily: ${a.dailySlots?.join(", ") ?? "—"}`;
+    return a.cadenceMode ?? "—";
   }
 
   // Stats
@@ -184,7 +183,7 @@ export function AutomationsPage() {
                   <StatusPill status={automation.status} />
                   <span className="chip">
                     <Icons.Clock size={10} />
-                    {getCadenceLabel(automation.cadence)}
+                    {getCadenceLabel(automation)}
                   </span>
                   <span className="chip">
                     {automation.groupingMode.replace("_", " ")}
@@ -196,6 +195,18 @@ export function AutomationsPage() {
                     ? new Date(automation.lastFetchedAt).toLocaleString()
                     : "Never"}
                 </p>
+
+                {automation.lastRunError && (
+                  <div
+                    className="mt-3 rounded-[12px] px-3 py-2 text-[11px]"
+                    style={{ background: "var(--err-soft)", border: "1px solid var(--err)" }}
+                  >
+                    <p className="font-semibold mb-0.5" style={{ color: "var(--err)" }}>Last error</p>
+                    <p className="line-clamp-2" style={{ color: "var(--err)", opacity: 0.85 }}>
+                      {automation.lastRunError}
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2 mt-5 pt-4" style={{ borderTop: "1px solid var(--line)" }}>
@@ -214,12 +225,13 @@ export function AutomationsPage() {
                 <button
                   onClick={() => pauseResumeMutation.mutate({
                     id: automation._id,
-                    action: automation.status === "paused" ? "resume" : "pause"
+                    action: (automation.status === "paused" || automation.status === "manual_review") ? "resume" : "pause"
                   })}
                   className="btn-secondary"
+                  style={automation.status === "manual_review" ? { borderColor: "var(--err)", color: "var(--err)" } : {}}
                 >
-                  {automation.status === "paused" ? <Icons.Play size={13} /> : <Icons.Pause size={13} />}
-                  {automation.status === "paused" ? "Resume" : "Pause"}
+                  {(automation.status === "paused" || automation.status === "manual_review") ? <Icons.Play size={13} /> : <Icons.Pause size={13} />}
+                  {automation.status === "manual_review" ? "Resume & Retry" : automation.status === "paused" ? "Resume" : "Pause"}
                 </button>
 
                 <button

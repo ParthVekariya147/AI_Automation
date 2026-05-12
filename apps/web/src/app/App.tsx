@@ -9,9 +9,6 @@ import { DriveBrowserPage } from "../pages/DriveBrowserPage";
 import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { LoginPage } from "../pages/LoginPage";
 import { PostsPage } from "../pages/PostsPage";
-import { QueueDetailPage } from "../pages/QueueDetailPage";
-import { QueueGroupPage } from "../pages/QueueGroupPage";
-import { QueuePage } from "../pages/QueuePage";
 import { AutomationsPage } from "../pages/AutomationsPage";
 import { SetupPage } from "../pages/SetupPage";
 import { useAuthStore } from "../store/auth-store";
@@ -58,10 +55,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/drive-browser" element={<DriveBrowserPage />} />
-                <Route path="/queue" element={<QueuePage />} />
                 <Route path="/posts" element={<PostsPage />} />
-                <Route path="/queue/:id" element={<QueueDetailPage />} />
-                <Route path="/queue/group/:groupId" element={<QueueGroupPage />} />
                 <Route path="/businesses" element={<BusinessesPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/integrations" element={<IntegrationsPage />} />

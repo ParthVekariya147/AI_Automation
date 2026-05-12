@@ -40,7 +40,6 @@ export function QueueGroupPage() {
 
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
   const [workflowStatus, setWorkflowStatus] = useState("new");
   const [postType, setPostType] = useState("carousel");
   const [scheduledTime, setScheduledTime] = useState<string | null>(null);
@@ -123,29 +122,19 @@ export function QueueGroupPage() {
         businessId: activeBusinessId,
       });
       const caption = res.data?.data?.caption || res.data?.data?.asset?.aiCaption || "";
+      const newHashtags: string[] = res.data?.data?.hashtags ?? [];
       setAiCaption(caption);
-      await updateGroup({ aiCaption: caption });
-      toast({ tone: "success", title: "Group caption generated" });
+      const update: Record<string, unknown> = { aiCaption: caption };
+      if (newHashtags.length) {
+        setHashtags(newHashtags);
+        update.hashtags = newHashtags;
+      }
+      await updateGroup(update);
+      toast({ tone: "success", title: "Caption & hashtags generated" });
     } catch (error) {
       toast({ tone: "error", title: "Generation failed", description: extractApiError(error, "") });
     } finally {
       setGenerating(false);
-    }
-  }
-
-  async function suggestHashtags(): Promise<string[]> {
-    if (!groupItems.length || !activeBusinessId) return [];
-    setSuggesting(true);
-    try {
-      const res = await api.post(`/media/${groupItems[0]._id}/suggest-hashtags`, {
-        businessId: activeBusinessId,
-      });
-      return res.data?.data?.hashtags ?? [];
-    } catch (error) {
-      toast({ tone: "error", title: "Hashtag suggest failed", description: extractApiError(error, "") });
-      return [];
-    } finally {
-      setSuggesting(false);
     }
   }
 
@@ -324,8 +313,6 @@ export function QueueGroupPage() {
                 setHashtags(tags);
                 updateGroup({ hashtags: tags });
               }}
-              onSuggest={suggestHashtags}
-              suggesting={suggesting}
             />
           </section>
 

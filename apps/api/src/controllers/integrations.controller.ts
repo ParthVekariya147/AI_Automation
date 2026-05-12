@@ -396,19 +396,11 @@ export const startDriveOAuth = asyncHandler(async (req: AuthedRequest, res: Resp
     userId: req.user.id,
     frontendOrigin
   });
-  const scopes = Array.from(
-    new Set([
-      ...env.googleDriveScopes,
-      "https://www.googleapis.com/auth/drive.readonly",
-      "https://www.googleapis.com/auth/userinfo.email"
-    ])
-  );
-
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     prompt: "consent",
-    include_granted_scopes: true,
-    scope: scopes,
+    include_granted_scopes: false,
+    scope: env.googleDriveScopes,
     state
   });
 

@@ -210,11 +210,11 @@ export function Section({ title, eyebrow, action, children, className = "" }: { 
 // PageHeader
 export function PageHeader({ eyebrow, title, subtitle, actions }: { eyebrow?: string; title: string; subtitle?: string; actions?: ReactNode }) {
   return (
-    <div className="flex items-end justify-between gap-4 flex-wrap">
+    <div className="flex items-end justify-between gap-3 flex-wrap">
       <div>
-        {eyebrow && <div className="section-eyebrow mb-1.5">{eyebrow}</div>}
-        <h1 className="font-display text-[34px] leading-[1.1] tracking-tight" style={{ letterSpacing: "-0.015em", color: "var(--ink)" }}>{title}</h1>
-        {subtitle && <p className="mt-2 text-[14px]" style={{ color: "var(--muted)" }}>{subtitle}</p>}
+        {eyebrow && <div className="section-eyebrow mb-1">{eyebrow}</div>}
+        <h1 className="font-display text-[26px] leading-[1.1] tracking-tight" style={{ letterSpacing: "-0.015em", color: "var(--ink)" }}>{title}</h1>
+        {subtitle && <p className="mt-1 text-[13px]" style={{ color: "var(--muted)" }}>{subtitle}</p>}
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </div>

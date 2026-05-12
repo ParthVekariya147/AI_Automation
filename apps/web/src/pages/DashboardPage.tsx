@@ -26,14 +26,14 @@ function StatCard({
   const t = toneMap[tone];
   return (
     <div
-      className="rounded-[18px] p-5 flex flex-col gap-3"
+      className="rounded-[14px] p-3.5 flex flex-col gap-2"
       style={{ background: t.bg, border: "1px solid var(--line)" }}
     >
       <div className="flex items-center justify-between">
         <p className="section-eyebrow">{label}</p>
         {icon && <span style={{ color: t.fg }}>{icon}</span>}
       </div>
-      <p className="text-[32px] font-bold leading-none" style={{ color: t.num }}>
+      <p className="text-[26px] font-bold leading-none" style={{ color: t.num }}>
         {value}
       </p>
     </div>
@@ -89,7 +89,7 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       <PageHeader
         eyebrow={new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
         title={`${greeting}, ${displayName}`}
@@ -103,10 +103,10 @@ export function DashboardPage() {
       />
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {isLoading
           ? Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-28 animate-pulse rounded-[18px]" style={{ background: "var(--bg-2)" }} />
+              <div key={i} className="h-20 animate-pulse rounded-[14px]" style={{ background: "var(--bg-2)" }} />
             ))
           : (
             <>
@@ -118,10 +118,10 @@ export function DashboardPage() {
           )}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
+      <div className="grid gap-4 xl:grid-cols-[1.4fr_0.6fr]">
         {/* Up next */}
-        <div className="card p-6">
-          <div className="flex items-center justify-between mb-5">
+        <div className="card p-4">
+          <div className="flex items-center justify-between mb-3">
             <div>
               <p className="section-eyebrow mb-1">Pipeline</p>
               <h2 className="text-[17px] font-bold" style={{ color: "var(--ink)" }}>Up next</h2>
@@ -186,8 +186,8 @@ export function DashboardPage() {
         </div>
 
         {/* Recent activity */}
-        <div className="card p-6">
-          <div className="mb-5">
+        <div className="card p-4">
+          <div className="mb-3">
             <p className="section-eyebrow mb-1">Activity</p>
             <h2 className="text-[17px] font-bold" style={{ color: "var(--ink)" }}>Quick links</h2>
           </div>
@@ -222,9 +222,9 @@ export function DashboardPage() {
       {/* Last published grid */}
       {recentLive.length > 0 && (
         <div>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <div>
-              <p className="section-eyebrow mb-1">Content</p>
+              <p className="section-eyebrow mb-0.5">Content</p>
               <h2 className="text-[17px] font-bold" style={{ color: "var(--ink)" }}>Last published</h2>
             </div>
             <Link to="/queue?status=live" className="btn-ghost">

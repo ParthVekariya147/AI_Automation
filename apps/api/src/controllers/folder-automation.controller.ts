@@ -9,23 +9,21 @@ import { ApiError } from "../utils/api-error.js";
 
 const createSchema = z.object({
   businessId: z.string(),
-  folderIds: z.array(z.string()).min(1),    // multi-folder support
+  folderIds: z.array(z.string()).min(1),
   folderNames: z.array(z.string()).min(1),
   igAccountId: z.string(),
   collaborators: z.array(z.string()).default([]),
-  groupingMode: z.enum(["subfolder", "filename_prefix", "manual", "batch_size"]),
+  groupingMode: z.enum(["one_per_file", "batch_size", "subfolder"]),
   batchSize: z.number().default(1),
   carouselMaxSize: z.number().default(10),
-  cadence: z.object({
-    type: z.enum(["fixed_time", "slots", "smart", "interval"]),
-    fixedTime: z.string().optional(),
-    slots: z.array(z.string()).optional(),
-    intervalHours: z.number().optional(),
-  }),
+  cadenceMode: z.enum(["interval", "daily_slots", "smart"]),
+  intervalValue: z.number().optional(),
+  intervalUnit: z.enum(["minutes", "hours", "days"]).optional(),
+  dailySlots: z.array(z.string()).optional(),
   brandVoice: z.string().optional(),
   useEmojis: z.boolean().default(true),
   reprocessImported: z.boolean().default(false),
-  priority: z.number().default(100),
+  priority: z.number().optional(),
 });
 
 const updateSchema = createSchema.partial().omit({ folderIds: true, folderNames: true, businessId: true });
@@ -36,12 +34,32 @@ export const createAutomation = asyncHandler(async (req: AuthedRequest, res: Res
   const data = createSchema.parse(req.body);
   const userId = req.user.id;
 
+  // Auto-assign priority: max existing + 1
+  const maxDoc = await FolderAutomation.findOne({ businessId: data.businessId })
+    .sort({ priority: -1 })
+    .select("priority")
+    .lean();
+  const nextPriority = data.priority ?? ((maxDoc?.priority ?? 0) + 1);
+
   const created = [];
   for (let i = 0; i < data.folderIds.length; i++) {
     const automation = await FolderAutomation.create({
-      ...data,
+      businessId: data.businessId,
       folderId: data.folderIds[i],
       folderName: data.folderNames[i],
+      igAccountId: data.igAccountId,
+      collaborators: data.collaborators,
+      groupingMode: data.groupingMode,
+      batchSize: data.batchSize,
+      carouselMaxSize: data.carouselMaxSize,
+      cadenceMode: data.cadenceMode,
+      intervalValue: data.intervalValue,
+      intervalUnit: data.intervalUnit,
+      dailySlots: data.dailySlots,
+      brandVoice: data.brandVoice,
+      useEmojis: data.useEmojis,
+      reprocessImported: data.reprocessImported,
+      priority: nextPriority + i,
       createdBy: userId,
     });
     created.push(automation);
@@ -54,6 +72,7 @@ export const createAutomation = asyncHandler(async (req: AuthedRequest, res: Res
 export const listAutomations = asyncHandler(async (req: AuthedRequest, res: Response) => {
   if (!req.user) throw new ApiError(401, "Authentication required");
   const { businessId } = req.query;
+  if (!businessId) throw new ApiError(400, "businessId is required");
   const items = await FolderAutomation.find({ businessId })
     .populate("igAccountId", "handle")
     .sort({ priority: 1, createdAt: -1 });
@@ -113,3 +132,16 @@ export const previewBeforeSave = asyncHandler(async (req: AuthedRequest, res: Re
   const result = await previewAutomation(req.body);
   res.json({ data: result });
 });
+
+// GET /automations/next-priority?businessId=...  — suggest next priority number for new automation
+export const getNextPriority = asyncHandler(async (req: AuthedRequest, res: Response) => {
+  if (!req.user) throw new ApiError(401, "Authentication required");
+  const { businessId } = req.query;
+  if (!businessId) throw new ApiError(400, "businessId is required");
+  const maxDoc = await FolderAutomation.findOne({ businessId })
+    .sort({ priority: -1 })
+    .select("priority")
+    .lean();
+  res.json({ data: { nextPriority: (maxDoc?.priority ?? 0) + 1 } });
+});
+

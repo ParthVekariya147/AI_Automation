@@ -10,6 +10,7 @@ import {
   resumeAutomation,
   listRuns,
   previewBeforeSave,
+  getNextPriority,
 } from "../controllers/folder-automation.controller.js";
 
 const router = Router();
@@ -19,6 +20,7 @@ router.use(requireAuth);
 router.get("/", listAutomations);
 router.post("/", createAutomation);
 router.post("/preview", previewBeforeSave);
+router.get("/next-priority", getNextPriority);
 router.patch("/:id", updateAutomation);
 router.delete("/:id", deleteAutomation);
 router.post("/:id/fetch", fetchNow);

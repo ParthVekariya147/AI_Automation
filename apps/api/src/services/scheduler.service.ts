@@ -1,22 +1,29 @@
 import { PostDraftModel } from "../models/PostDraft.js";
-import { MediaAssetModel } from "../models/MediaAsset.js";
+import { FolderAutomation } from "../models/FolderAutomation.js";
 import { publishDraftById } from "./publish.service.js";
-import { autoPublishMediaAsset, autoPublishCarouselGroup } from "./auto-publish.service.js";
+import { hasPendingWork, runAutomation } from "./folder-automation.service.js";
 
 const INTERVAL_MS = 60 * 1000;
 const MAX_CONCURRENT = 3;
 
 export function startScheduler() {
-  void runOnce();
-  setInterval(() => void runOnce(), INTERVAL_MS);
+  void runNow();
+  setInterval(() => void runNow(), INTERVAL_MS);
   console.log("[scheduler] Auto-publish scheduler started (checks every 60s)");
 }
 
-async function runOnce() {
-  await Promise.allSettled([publishDuePosts(), publishDueMediaAssets()]);
+export async function runNow(): Promise<{ postsTriggered: number; automationsTriggered: number }> {
+  const [postsResult, autoResult] = await Promise.allSettled([
+    publishDuePosts(),
+    runPendingAutomations(),
+  ]);
+  return {
+    postsTriggered: postsResult.status === "fulfilled" ? postsResult.value : 0,
+    automationsTriggered: autoResult.status === "fulfilled" ? autoResult.value : 0,
+  };
 }
 
-async function publishDuePosts() {
+async function publishDuePosts(): Promise<number> {
   try {
     const due = await PostDraftModel.find({
       status: "scheduled",
@@ -25,7 +32,7 @@ async function publishDuePosts() {
       .select("_id title scheduledFor")
       .lean();
 
-    if (!due.length) return;
+    if (!due.length) return 0;
     console.log(`[scheduler] ${due.length} post draft(s) due`);
 
     for (let i = 0; i < due.length; i += MAX_CONCURRENT) {
@@ -42,65 +49,38 @@ async function publishDuePosts() {
         })
       );
     }
+    return due.length;
   } catch (err) {
     console.error("[scheduler] Error querying due posts:", err);
+    return 0;
   }
 }
 
-async function publishDueMediaAssets() {
+
+async function runPendingAutomations(): Promise<number> {
   try {
-    const dueAssets = await MediaAssetModel.find({
-      workflowStatus: "scheduled",
-      scheduledTime: { $lte: new Date() }
-    })
-      .select("_id groupId businessId scheduledTime")
-      .lean();
+    // Find all idle automations (not paused) ordered by priority
+    const automations = await FolderAutomation.find({
+      status: "idle",
+    }).sort({ priority: 1, createdAt: 1 });
 
-    if (!dueAssets.length) return;
-    console.log(`[scheduler] ${dueAssets.length} media asset(s) due`);
+    if (!automations.length) return 0;
 
-    // Group by carousel groups, process standalone separately
-    const grouped = new Map<string, typeof dueAssets>();
-    const standalone: typeof dueAssets = [];
+    // Process one automation per scheduler tick (avoid blocking)
+    for (const automation of automations) {
+      const pending = await hasPendingWork(automation);
+      if (!pending) continue;
 
-    for (const asset of dueAssets) {
-      if (asset.groupId) {
-        const key = `${asset.businessId}:${asset.groupId}`;
-        const list = grouped.get(key) ?? [];
-        list.push(asset);
-        grouped.set(key, list);
-      } else {
-        standalone.push(asset);
-      }
+      console.log(`[scheduler] Auto-running automation "${automation.folderName}" (priority ${automation.priority})`);
+      // Fire and forget — the automation sets its own status to "running"
+      runAutomation(automation._id.toString(), "scheduler").catch((err) =>
+        console.error(`[scheduler] Automation "${automation.folderName}" failed:`, err)
+      );
+      return 1;
     }
-
-    const tasks: Array<() => Promise<void>> = [];
-
-    for (const [key, assets] of grouped) {
-      const [businessId, groupId] = key.split(":");
-      tasks.push(async () => {
-        try {
-          await autoPublishCarouselGroup(groupId, businessId);
-        } catch (err) {
-          console.error(`[scheduler] Failed carousel group ${groupId}: ${err instanceof Error ? err.message : err}`);
-        }
-      });
-    }
-
-    for (const asset of standalone) {
-      tasks.push(async () => {
-        try {
-          await autoPublishMediaAsset(asset._id.toString());
-        } catch (err) {
-          console.error(`[scheduler] Failed asset ${asset._id}: ${err instanceof Error ? err.message : err}`);
-        }
-      });
-    }
-
-    for (let i = 0; i < tasks.length; i += MAX_CONCURRENT) {
-      await Promise.allSettled(tasks.slice(i, i + MAX_CONCURRENT).map((fn) => fn()));
-    }
+    return 0;
   } catch (err) {
-    console.error("[scheduler] Error querying due media assets:", err);
+    console.error("[scheduler] Error in runPendingAutomations:", err);
+    return 0;
   }
 }

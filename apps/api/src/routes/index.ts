@@ -7,11 +7,18 @@ import { mediaRouter } from "./media.routes.js";
 import { postRouter } from "./post.routes.js";
 import { reportRouter } from "./report.routes.js";
 import automationRouter from "./automation.routes.js";
+import { requireAuth } from "../middlewares/auth.js";
+import { runNow } from "../services/scheduler.service.js";
 
 export const apiRouter = Router();
 
 apiRouter.get("/health", (_req, res) => {
   res.json({ success: true, message: "API is healthy" });
+});
+
+apiRouter.post("/scheduler/run-now", requireAuth, async (_req, res) => {
+  const result = await runNow();
+  res.json({ success: true, data: result });
 });
 
 apiRouter.use("/auth", authRouter);

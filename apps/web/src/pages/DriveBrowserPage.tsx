@@ -29,6 +29,12 @@ type DriveFilesResponse = {
   };
 };
 
+function gridClass(mode: MediaViewMode): string {
+  if (mode === "large")  return "grid gap-4 grid-cols-2 md:grid-cols-3 xl:grid-cols-4";
+  if (mode === "medium") return "grid gap-3 grid-cols-3 md:grid-cols-4 xl:grid-cols-5";
+  return "grid gap-2 grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6";
+}
+
 export function DriveBrowserPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -51,10 +57,11 @@ export function DriveBrowserPage() {
   const [fileSearch, setFileSearch] = useState("");
   const [mediaFilter, setMediaFilter] = useState<"all" | "image" | "video">("all");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
-  const [viewMode, setViewMode] = useState<MediaViewMode>("large");
+  const [viewMode, setViewMode] = useState<MediaViewMode>("small");
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [importingFileIds, setImportingFileIds] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
   const { data: importedAssets = [] } = useQuery<MediaAsset[]>({
@@ -72,7 +79,7 @@ export function DriveBrowserPage() {
     enabled: Boolean(activeBusinessId)
   });
 
-  const connectedDrive = connections.find((connection) => connection.isActive && connection.isOAuthReady);
+  const connectedDrive = connections.find((c) => c.isActive && c.isOAuthReady);
   const connectionState: "not_connected" | "connected" | "disconnected" = connectedDrive
     ? "connected"
     : connections.length
@@ -80,7 +87,7 @@ export function DriveBrowserPage() {
       : "not_connected";
 
   const importedDriveFileIds = useMemo(
-    () => new Set(importedAssets.map((asset) => asset.driveFileId).filter(Boolean)),
+    () => new Set(importedAssets.map((a) => a.driveFileId).filter(Boolean)),
     [importedAssets]
   );
 
@@ -117,22 +124,19 @@ export function DriveBrowserPage() {
   }, [oauthError, oauthStatus]);
 
   const mediaFiles = useMemo(() => {
-    const searchNeedle = fileSearch.trim().toLowerCase();
+    const needle = fileSearch.trim().toLowerCase();
     return files
-      .filter((file) => file.mimeType.startsWith("image/") || file.mimeType.startsWith("video/"))
-      .filter((file) => {
-        if (mediaFilter === "image") return file.mimeType.startsWith("image/");
-        if (mediaFilter === "video") return file.mimeType.startsWith("video/");
+      .filter((f) => f.mimeType.startsWith("image/") || f.mimeType.startsWith("video/"))
+      .filter((f) => {
+        if (mediaFilter === "image") return f.mimeType.startsWith("image/");
+        if (mediaFilter === "video") return f.mimeType.startsWith("video/");
         return true;
       })
-      .filter((file) => {
-        if (!searchNeedle) return true;
-        return file.name.toLowerCase().includes(searchNeedle);
-      })
-      .sort((left, right) => {
-        const leftTime = new Date(left.createdTime || 0).getTime();
-        const rightTime = new Date(right.createdTime || 0).getTime();
-        return sortOrder === "newest" ? rightTime - leftTime : leftTime - rightTime;
+      .filter((f) => (!needle || f.name.toLowerCase().includes(needle)))
+      .sort((a, b) => {
+        const at = new Date(a.createdTime || 0).getTime();
+        const bt = new Date(b.createdTime || 0).getTime();
+        return sortOrder === "newest" ? bt - at : at - bt;
       });
   }, [fileSearch, files, mediaFilter, sortOrder]);
 
@@ -152,7 +156,7 @@ export function DriveBrowserPage() {
     setFileSearch("");
     setMediaFilter("all");
     setSortOrder("newest");
-    setViewMode("large");
+    setViewMode("small");
     setSelectedFileIds([]);
     setLastSelectedIndex(null);
   }, [activeBusinessId]);
@@ -184,9 +188,7 @@ export function DriveBrowserPage() {
     const trigger = loadMoreTriggerRef.current;
     if (!trigger) return;
     const observer = new IntersectionObserver((entries) => {
-      const entry = entries[0];
-      if (!entry?.isIntersecting) return;
-      void fetchDriveData({ append: true });
+      if (entries[0]?.isIntersecting) void fetchDriveData({ append: true });
     }, { rootMargin: "320px 0px" });
     observer.observe(trigger);
     return () => observer.disconnect();
@@ -218,29 +220,29 @@ export function DriveBrowserPage() {
         pageToken: append ? filesNextPageToken || undefined : undefined
       };
       if (append) {
-        const filesResponse = await api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams });
-        const nextBatch = filesResponse.data.data || [];
-        setFiles((previous) => {
-          const deduped = new Map(previous.map((file) => [file.id, file]));
-          for (const file of nextBatch) { if (!deduped.has(file.id)) { deduped.set(file.id, file); } }
-          return Array.from(deduped.values());
+        const res = await api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams });
+        const next = res.data.data || [];
+        setFiles((prev) => {
+          const map = new Map(prev.map((f) => [f.id, f]));
+          for (const f of next) { if (!map.has(f.id)) map.set(f.id, f); }
+          return Array.from(map.values());
         });
-        setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+        setFilesNextPageToken(res.data.meta?.nextPageToken ?? null);
         return;
       }
       if (!hasFetchedData) {
-        const [foldersResponse, filesResponse] = await Promise.all([
+        const [foldersRes, filesRes] = await Promise.all([
           api.get("/google-drive/folders", { params: { businessId: activeBusinessId } }),
           api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams })
         ]);
-        const folderData = foldersResponse.data.data as { myDrive: DriveFolder[]; sharedWithMe: DriveFolder[] };
-        setFolderTree((prev) => ({ ...prev, root: folderData.myDrive ?? [], shared: folderData.sharedWithMe ?? [] }));
-        setFiles(filesResponse.data.data || []);
-        setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+        const fd = foldersRes.data.data as { myDrive: DriveFolder[]; sharedWithMe: DriveFolder[] };
+        setFolderTree((prev) => ({ ...prev, root: fd.myDrive ?? [], shared: fd.sharedWithMe ?? [] }));
+        setFiles(filesRes.data.data || []);
+        setFilesNextPageToken(filesRes.data.meta?.nextPageToken ?? null);
       } else {
-        const filesResponse = await api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams });
-        setFiles(filesResponse.data.data || []);
-        setFilesNextPageToken(filesResponse.data.meta?.nextPageToken ?? null);
+        const filesRes = await api.get<DriveFilesResponse>("/google-drive/files", { params: fileParams });
+        setFiles(filesRes.data.data || []);
+        setFilesNextPageToken(filesRes.data.meta?.nextPageToken ?? null);
       }
       setHasFetchedData(true);
       setLastFetchedFolderId(selectedFolderId);
@@ -256,21 +258,21 @@ export function DriveBrowserPage() {
 
   async function toggleFolder(folder: DriveFolder) {
     const isExpanded = expandedFolderIds.has(folder.id);
-    const newExpanded = new Set(expandedFolderIds);
+    const next = new Set(expandedFolderIds);
     if (isExpanded) {
-      newExpanded.delete(folder.id);
+      next.delete(folder.id);
     } else {
-      newExpanded.add(folder.id);
+      next.add(folder.id);
       if (!folderTree[folder.id]) {
         try {
-          const response = await api.get("/google-drive/folders", { params: { businessId: activeBusinessId, parentId: folder.id } });
-          setFolderTree((prev) => ({ ...prev, [folder.id]: response.data.data as DriveFolder[] }));
+          const res = await api.get("/google-drive/folders", { params: { businessId: activeBusinessId, parentId: folder.id } });
+          setFolderTree((prev) => ({ ...prev, [folder.id]: res.data.data as DriveFolder[] }));
         } catch (error) {
           toast({ tone: "error", title: "Could not load subfolders", description: extractApiError(error, "Please try again.") });
         }
       }
     }
-    setExpandedFolderIds(newExpanded);
+    setExpandedFolderIds(next);
     setSelectedFolderId(folder.id);
   }
 
@@ -296,63 +298,63 @@ export function DriveBrowserPage() {
   async function importFile(file: DriveFile) {
     if (!activeBusinessId) return;
     try {
-      setImportingFileIds((prev) => { const next = new Set(prev); next.add(file.id); return next; });
+      setImportingFileIds((prev) => { const s = new Set(prev); s.add(file.id); return s; });
       const response = await api.post("/media/import-from-drive", {
         businessId: activeBusinessId, driveFileId: file.id, driveFolderId: selectedFolderId,
         folderName: selectedFolderName, originalName: file.name, mimeType: file.mimeType,
         sizeInBytes: Number(file.size || 0), previewUrl: file.previewUrl || undefined,
         driveThumbnailLink: file.thumbnailLink || undefined, driveViewLink: file.webViewLink || undefined
       });
-      const alreadyImported = Boolean(response.data?.meta?.alreadyImported);
+      const already = Boolean(response.data?.meta?.alreadyImported);
       toast({
-        tone: alreadyImported ? "info" : "success",
-        title: alreadyImported ? "File already imported" : "File imported",
-        description: alreadyImported ? `${file.name} is already in the content queue.` : `${file.name} was added to the content queue.`
+        tone: already ? "info" : "success",
+        title: already ? "Already imported" : "File imported",
+        description: already ? `${file.name} is already in the content queue.` : `${file.name} was added to the content queue.`
       });
       queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["media", activeBusinessId] });
     } catch (error) {
       const message = extractApiError(error, "File could not be imported.");
-      const isDuplicate = /already exists|already imported|duplicate/i.test(message);
+      const isDupe = /already exists|already imported|duplicate/i.test(message);
       toast({
-        tone: isDuplicate ? "info" : "error",
-        title: isDuplicate ? "File already imported" : "Import failed",
-        description: isDuplicate ? `${file.name} is already in the content queue.` : message
+        tone: isDupe ? "info" : "error",
+        title: isDupe ? "Already imported" : "Import failed",
+        description: isDupe ? `${file.name} is already in the content queue.` : message
       });
     } finally {
-      setImportingFileIds((prev) => { const next = new Set(prev); next.delete(file.id); return next; });
+      setImportingFileIds((prev) => { const s = new Set(prev); s.delete(file.id); return s; });
     }
   }
 
   async function importSelectedFiles() {
     if (!activeBusinessId || !selectedFileIds.length) return;
-    const filesToImport = mediaFiles.filter((f) => selectedFileIds.includes(f.id));
-    if (!filesToImport.length) return;
-    setImportingFileIds((prev) => { const next = new Set(prev); filesToImport.forEach((f) => next.add(f.id)); return next; });
+    const toImport = mediaFiles.filter((f) => selectedFileIds.includes(f.id));
+    if (!toImport.length) return;
+    setImportingFileIds((prev) => { const s = new Set(prev); toImport.forEach((f) => s.add(f.id)); return s; });
     let newCount = 0, alreadyCount = 0, failCount = 0;
     await Promise.allSettled(
-      filesToImport.map(async (file) => {
+      toImport.map(async (file) => {
         try {
-          const response = await api.post("/media/import-from-drive", {
+          const res = await api.post("/media/import-from-drive", {
             businessId: activeBusinessId, driveFileId: file.id, driveFolderId: selectedFolderId,
             folderName: selectedFolderName, originalName: file.name, mimeType: file.mimeType,
             sizeInBytes: Number(file.size || 0), previewUrl: file.previewUrl || undefined,
             driveThumbnailLink: file.thumbnailLink || undefined, driveViewLink: file.webViewLink || undefined
           });
-          if (response.data?.meta?.alreadyImported) { alreadyCount++; } else { newCount++; }
+          if (res.data?.meta?.alreadyImported) { alreadyCount++; } else { newCount++; }
         } catch (error) {
-          const message = extractApiError(error, "File could not be imported.");
-          if (/already exists|already imported|duplicate/i.test(message)) { alreadyCount++; } else { failCount++; }
+          const msg = extractApiError(error, "File could not be imported.");
+          if (/already exists|already imported|duplicate/i.test(msg)) { alreadyCount++; } else { failCount++; }
         } finally {
-          setImportingFileIds((prev) => { const next = new Set(prev); next.delete(file.id); return next; });
+          setImportingFileIds((prev) => { const s = new Set(prev); s.delete(file.id); return s; });
         }
       })
     );
     toast({
       tone: failCount > 0 ? "error" : "success",
       title: "Bulk import finished",
-      description: `Successfully imported ${newCount} files. ${alreadyCount > 0 ? `${alreadyCount} were already in queue. ` : ""}${failCount > 0 ? `Failed to import ${failCount} files.` : ""}`
+      description: `Imported ${newCount}. ${alreadyCount > 0 ? `${alreadyCount} already in queue. ` : ""}${failCount > 0 ? `Failed: ${failCount}.` : ""}`
     });
     queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
     queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
@@ -361,25 +363,24 @@ export function DriveBrowserPage() {
   }
 
   useEffect(() => {
-    const visibleIds = new Set(mediaFiles.map((file) => file.id));
-    setSelectedFileIds((current) => current.filter((id) => visibleIds.has(id)));
+    const visible = new Set(mediaFiles.map((f) => f.id));
+    setSelectedFileIds((cur) => cur.filter((id) => visible.has(id)));
     setLastSelectedIndex(null);
   }, [mediaFiles]);
 
   function toggleFileSelection(file: DriveFile, index: number, event: MouseEvent) {
-    const isRangeSelect = event.shiftKey && lastSelectedIndex !== null;
-    const isMultiSelect = event.metaKey || event.ctrlKey;
-    setSelectedFileIds((current) => {
-      if (isRangeSelect) {
+    const range = event.shiftKey && lastSelectedIndex !== null;
+    const multi = event.metaKey || event.ctrlKey;
+    setSelectedFileIds((cur) => {
+      if (range) {
         const start = Math.min(lastSelectedIndex, index);
         const end = Math.max(lastSelectedIndex, index);
-        const rangeIds = mediaFiles.slice(start, end + 1).map((item) => item.id);
-        if (isMultiSelect) return Array.from(new Set([...current, ...rangeIds]));
-        return rangeIds;
+        const ids = mediaFiles.slice(start, end + 1).map((f) => f.id);
+        if (multi) return Array.from(new Set([...cur, ...ids]));
+        return ids;
       }
-      if (isMultiSelect) {
-        if (current.includes(file.id)) return current.filter((id) => id !== file.id);
-        return [...current, file.id];
+      if (multi) {
+        return cur.includes(file.id) ? cur.filter((id) => id !== file.id) : [...cur, file.id];
       }
       return [file.id];
     });
@@ -388,8 +389,15 @@ export function DriveBrowserPage() {
 
   const connStateTone = connectionState === "connected" ? "ok" : connectionState === "disconnected" ? "warn" : "muted";
 
+  const VIEW_MODES = [
+    { mode: "small" as const,    icon: <Icons.Mosaic size={14} />, label: "Small" },
+    { mode: "medium" as const,   icon: <Icons.Grid size={14} />,   label: "Medium" },
+    { mode: "large" as const,    icon: <Icons.Image size={14} />,  label: "Large" },
+    { mode: "detailed" as const, icon: <Icons.List size={14} />,   label: "List" },
+  ];
+
   return (
-    <div className="space-y-7">
+    <div className="space-y-3 md:space-y-4">
       <PageHeader
         eyebrow="Pipeline"
         title="Drive Browser"
@@ -397,7 +405,6 @@ export function DriveBrowserPage() {
         actions={<Pill tone={connStateTone}>{connectionState.replace("_", " ")}</Pill>}
       />
 
-      {/* OAuth feedback */}
       {oauthFeedback && (
         <div
           className="flex items-center gap-3 rounded-[14px] px-4 py-3 text-sm"
@@ -413,34 +420,65 @@ export function DriveBrowserPage() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {[
-          { label: "Source", value: connectedDrive ? "Google Drive" : "Not Connected", sub: connectedDrive?.accountEmail },
-          { label: "Folders", value: connectedDrive && hasFetchedData ? Object.keys(folderTree).length : 0, sub: "Total folders" },
-          { label: "Files Found", value: hasFetchedData ? mediaFiles.length : 0, sub: lastFetchedFolderName ? `From ${lastFetchedFolderName}` : "Select a folder" },
-          { label: "Imported", value: importedAssets.length, sub: "In Queue" },
+          { label: "Source",       value: connectedDrive ? "Google Drive" : "Not Connected", sub: connectedDrive?.accountEmail },
+          { label: "Folders",      value: connectedDrive && hasFetchedData ? Object.keys(folderTree).length : 0, sub: "Total folders" },
+          { label: "Files Found",  value: hasFetchedData ? mediaFiles.length : 0, sub: lastFetchedFolderName ? `From ${lastFetchedFolderName}` : "Select a folder" },
+          { label: "Imported",     value: importedAssets.length, sub: "In Queue" },
         ].map((s) => (
-          <div key={s.label} className="card p-4">
-            <p className="section-eyebrow mb-2">{s.label}</p>
-            <p className="text-[22px] font-bold leading-none" style={{ color: "var(--ink)" }}>{s.value}</p>
-            {s.sub && <p className="text-[11px] mt-1.5 truncate" style={{ color: "var(--muted)" }}>{s.sub}</p>}
+          <div key={s.label} className="card p-3">
+            <p className="section-eyebrow mb-1">{s.label}</p>
+            <p className="text-[20px] font-bold leading-none" style={{ color: "var(--ink)" }}>{s.value}</p>
+            {s.sub && <p className="mt-1 truncate text-[11px]" style={{ color: "var(--muted)" }}>{s.sub}</p>}
           </div>
         ))}
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[300px_1fr]">
-        {/* Sidebar */}
-        <div className="space-y-4">
-          {/* Connect panel */}
-          <div className="card p-5">
+      {/* Mobile: folder toggle bar */}
+      <div className="flex items-center gap-2 lg:hidden">
+        <button
+          onClick={() => setSidebarOpen((v) => !v)}
+          className="btn-secondary shrink-0"
+        >
+          <Icons.Folder size={13} />
+          {sidebarOpen ? "Hide Folders" : "Folders"}
+          {sidebarOpen
+            ? <Icons.ChevronDown size={12} />
+            : <Icons.ChevronRight size={12} />}
+        </button>
+        {selectedFolderName && (
+          <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: "var(--ink-2)" }}>
+            / {selectedFolderName}
+          </span>
+        )}
+        {connectionState !== "connected" && (
+          <button onClick={connectGoogleDrive} className="btn-primary ml-auto shrink-0">
+            <Icons.Drive size={13} /> Connect
+          </button>
+        )}
+      </div>
+
+      {/* Layout grid */}
+      <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
+
+        {/* ── Sidebar ── */}
+        <aside className={`space-y-3 ${sidebarOpen ? "block" : "hidden"} lg:block`}>
+
+          {/* Connect card */}
+          <div className="card p-3">
             <p className="section-eyebrow mb-1">Media Source</p>
-            <h3 className="text-[15px] font-bold mb-3" style={{ color: "var(--ink)" }}>Google Drive</h3>
+            <h3 className="mb-2 text-[13px] font-bold" style={{ color: "var(--ink)" }}>Google Drive</h3>
             <div className="flex flex-wrap gap-2">
-              <button onClick={connectGoogleDrive} className="btn-primary">
+              <button onClick={connectGoogleDrive} className="btn-primary flex-1">
                 <Icons.Drive size={13} />
                 {connectionState === "connected" ? "Reconnect" : "Connect Drive"}
               </button>
-              <button onClick={disconnectDrive} disabled={connectionState !== "connected"} className="btn-secondary disabled:opacity-40">
+              <button
+                onClick={disconnectDrive}
+                disabled={connectionState !== "connected"}
+                className="btn-secondary disabled:opacity-40"
+              >
                 Disconnect
               </button>
             </div>
@@ -462,10 +500,10 @@ export function DriveBrowserPage() {
                   setSelectedFolderName("My Drive");
                 }}
                 disabled={connectionState !== "connected" || isFetchingData || isFetchingMoreFiles}
-                className="btn-secondary w-full justify-center mt-3 disabled:opacity-50"
+                className="btn-secondary mt-3 w-full justify-center disabled:opacity-50"
               >
                 {isFetchingData || isFetchingMoreFiles ? (
-                  <><span className="inline-block w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" /> Fetching…</>
+                  <><span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" /> Fetching…</>
                 ) : (
                   <><Icons.Refresh size={13} /> Refresh Drive</>
                 )}
@@ -473,10 +511,10 @@ export function DriveBrowserPage() {
             )}
           </div>
 
-          {/* Folders panel */}
-          <div className="card p-5">
+          {/* Folder explorer */}
+          <div className="card p-3">
             <p className="section-eyebrow mb-1">Folders</p>
-            <h3 className="text-[15px] font-bold mb-3" style={{ color: "var(--ink)" }}>Explorer</h3>
+            <h3 className="mb-2 text-[13px] font-bold" style={{ color: "var(--ink)" }}>Explorer</h3>
 
             {!connectedDrive ? (
               <p className="text-sm" style={{ color: "var(--muted)" }}>Connect Drive first to load folders.</p>
@@ -484,27 +522,32 @@ export function DriveBrowserPage() {
               <p className="text-sm" style={{ color: "var(--muted)" }}>Click Refresh Drive to load the folder tree.</p>
             ) : (
               <div className="space-y-2">
-                <input
-                  value={folderSearch}
-                  onChange={(event) => setFolderSearch(event.target.value)}
-                  placeholder="Filter folders"
-                  className="input mb-2"
-                />
+                {/* Folder search */}
+                <div className="relative mb-2">
+                  <Icons.Search size={12} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
+                  <input
+                    value={folderSearch}
+                    onChange={(e) => setFolderSearch(e.target.value)}
+                    placeholder="Filter folders…"
+                    className="input pl-7"
+                  />
+                </div>
+
                 <p className="section-eyebrow px-1">My Drive</p>
                 <button
                   onClick={() => { setSelectedFolderId("root"); setSelectedFolderName("My Drive"); }}
                   className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition"
                   style={{
                     background: (selectedFolderId === "root" || !selectedFolderId) ? "var(--accent-soft)" : "transparent",
-                    color: (selectedFolderId === "root" || !selectedFolderId) ? "var(--accent)" : "var(--ink-2)",
+                    color:      (selectedFolderId === "root" || !selectedFolderId) ? "var(--accent)"      : "var(--ink-2)",
                   }}
                 >
-                  <Icons.Folder size={14} />
-                  My Drive
+                  <Icons.Folder size={14} /> My Drive
                 </button>
+
                 <div className="space-y-0.5">
                   {(folderTree["root"] || [])
-                    .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
+                    .filter((f) => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
                     .map((folder) => (
                       <FolderNode
                         key={folder.id}
@@ -520,12 +563,13 @@ export function DriveBrowserPage() {
                     <p className="px-3 py-2 text-xs italic" style={{ color: "var(--muted)" }}>No media folders found.</p>
                   )}
                 </div>
+
                 {((folderTree["shared"] || []).length > 0 || hasFetchedData) && (
                   <>
-                    <p className="section-eyebrow px-1 mt-3">Shared with me</p>
+                    <p className="section-eyebrow mt-3 px-1">Shared with me</p>
                     <div className="space-y-0.5">
                       {(folderTree["shared"] || [])
-                        .filter(f => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
+                        .filter((f) => !folderSearch || f.name.toLowerCase().includes(folderSearch.toLowerCase()))
                         .map((folder) => (
                           <FolderNode
                             key={folder.id}
@@ -546,19 +590,44 @@ export function DriveBrowserPage() {
               </div>
             )}
           </div>
-        </div>
+        </aside>
 
-        {/* Main media panel */}
-        <div className="card p-6">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <p className="section-eyebrow mb-1">
+        {/* ── Main panel ── */}
+        <div className="card min-w-0 p-3 md:p-4">
+
+          {/* Panel header */}
+          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="section-eyebrow mb-0.5 truncate">
                 {selectedFolderName ? `Media in ${selectedFolderName}` : "Select a folder"}
               </p>
               <h3 className="text-[15px] font-bold" style={{ color: "var(--ink)" }}>
                 {hasFetchedData ? `${mediaFiles.length} items` : "Fetch content to see files"}
               </h3>
             </div>
+
+            {/* View mode toggle */}
+            {hasFetchedData && mediaFiles.length > 0 && (
+              <div
+                className="flex shrink-0 overflow-hidden rounded-xl border"
+                style={{ borderColor: "var(--line)" }}
+              >
+                {VIEW_MODES.map(({ mode, icon, label }) => (
+                  <button
+                    key={mode}
+                    onClick={() => setViewMode(mode)}
+                    title={label}
+                    className="flex items-center justify-center px-2.5 py-2 transition"
+                    style={{
+                      background: viewMode === mode ? "var(--accent)" : "transparent",
+                      color:      viewMode === mode ? "white"          : "var(--ink-2)",
+                    }}
+                  >
+                    {icon}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {!connectedDrive ? (
@@ -570,71 +639,66 @@ export function DriveBrowserPage() {
           ) : !mediaFiles.length ? (
             <DriveEmptyState text="No image or video files were found in this folder." />
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
+
               {/* Filters toolbar */}
               <div className="flex flex-wrap gap-2">
-                <input
-                  value={fileSearch}
-                  onChange={(event) => setFileSearch(event.target.value)}
-                  placeholder="Search files..."
-                  className="input flex-1 min-w-[160px]"
-                />
+                <div className="relative min-w-[140px] flex-1">
+                  <Icons.Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "var(--muted)" }} />
+                  <input
+                    value={fileSearch}
+                    onChange={(e) => setFileSearch(e.target.value)}
+                    placeholder="Search files…"
+                    className="input w-full pl-8"
+                  />
+                </div>
                 <select
                   value={mediaFilter}
-                  onChange={(event) => setMediaFilter(event.target.value as "all" | "image" | "video")}
+                  onChange={(e) => setMediaFilter(e.target.value as "all" | "image" | "video")}
                   className="input"
                   style={{ width: "auto" }}
                 >
                   <option value="all">All media</option>
-                  <option value="image">Images only</option>
-                  <option value="video">Videos only</option>
+                  <option value="image">Images</option>
+                  <option value="video">Videos</option>
                 </select>
                 <select
                   value={sortOrder}
-                  onChange={(event) => setSortOrder(event.target.value as "newest" | "oldest")}
+                  onChange={(e) => setSortOrder(e.target.value as "newest" | "oldest")}
                   className="input"
                   style={{ width: "auto" }}
                 >
                   <option value="newest">Newest first</option>
                   <option value="oldest">Oldest first</option>
                 </select>
-                <select
-                  value={viewMode}
-                  onChange={(event) => setViewMode(event.target.value as MediaViewMode)}
-                  className="input"
-                  style={{ width: "auto" }}
-                >
-                  <option value="large">Large</option>
-                  <option value="medium">Medium</option>
-                  <option value="small">Small</option>
-                  <option value="detailed">Detailed</option>
-                </select>
               </div>
 
               {/* Selection bar */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-[12px] px-4 py-3 text-sm" style={{ background: "var(--bg)", border: "1px solid var(--line)" }}>
+              <div
+                className="flex flex-col gap-2 rounded-[12px] px-3 py-2.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+                style={{ background: "var(--bg)", border: "1px solid var(--line)" }}
+              >
                 <p style={{ color: "var(--ink-2)" }}>
-                  {selectedFileIds.length} selected · Shift+Click for range, Ctrl/Cmd+Click for multi
+                  {selectedFileIds.length > 0 ? `${selectedFileIds.length} selected` : "0 selected"}
+                  {" · "}Shift+Click range · Ctrl/Cmd+Click multi
                 </p>
-                <div className="flex items-center gap-3">
-                  {selectedFileIds.length > 0 && (
-                    <>
-                      <button
-                        onClick={() => { setSelectedFileIds([]); setLastSelectedIndex(null); }}
-                        className="btn-secondary text-xs"
-                      >
-                        Clear
-                      </button>
-                      <button
-                        onClick={importSelectedFiles}
-                        disabled={importingFileIds.size > 0}
-                        className="btn-primary text-xs disabled:opacity-60"
-                      >
-                        {importingFileIds.size > 0 ? "Importing..." : `Import ${selectedFileIds.length} files`}
-                      </button>
-                    </>
-                  )}
-                </div>
+                {selectedFileIds.length > 0 && (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      onClick={() => { setSelectedFileIds([]); setLastSelectedIndex(null); }}
+                      className="btn-secondary text-xs"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={importSelectedFiles}
+                      disabled={importingFileIds.size > 0}
+                      className="btn-primary text-xs disabled:opacity-60"
+                    >
+                      {importingFileIds.size > 0 ? "Importing…" : `Import ${selectedFileIds.length}`}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {fetchError && (
@@ -643,44 +707,50 @@ export function DriveBrowserPage() {
                 </div>
               )}
 
-              {/* File grid */}
+              {/* ── Detailed list view ── */}
               {viewMode === "detailed" ? (
                 <div className="space-y-2">
                   {mediaFiles.map((file, index) => {
-                    const selected = selectedFileIds.includes(file.id);
-                    const imported = importedDriveFileIds.has(file.id);
+                    const selected  = selectedFileIds.includes(file.id);
+                    const imported  = importedDriveFileIds.has(file.id);
                     return (
                       <article
                         key={file.id}
-                        onClick={(event) => toggleFileSelection(file, index, event)}
-                        className="grid cursor-pointer gap-3 rounded-[14px] p-3 transition md:grid-cols-[64px_1fr_auto]"
+                        onClick={(e) => toggleFileSelection(file, index, e)}
+                        className="grid cursor-pointer gap-3 rounded-[14px] p-3 transition"
                         style={{
+                          gridTemplateColumns: "56px 1fr auto",
                           background: selected ? "var(--info-soft)" : "var(--bg)",
                           border: `1px solid ${selected ? "var(--info)" : "var(--line)"}`,
                         }}
                       >
-                        <div className="h-16 w-16 overflow-hidden rounded-xl" style={{ background: "var(--bg-2)" }}>
+                        <div className="h-14 w-14 overflow-hidden rounded-xl" style={{ background: "var(--bg-2)" }}>
                           {file.mimeType.startsWith("image/") && file.previewUrl ? (
                             <img src={resolveApiAssetUrl(file.previewUrl)} alt={file.name} className="h-full w-full object-cover" />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-[10px]" style={{ color: "var(--muted)" }}>
-                              {file.mimeType.startsWith("video/") ? "Video" : "No preview"}
+                            <div className="flex h-full items-center justify-center" style={{ color: "var(--muted)" }}>
+                              {file.mimeType.startsWith("video/") ? <Icons.Film size={20} /> : <Icons.Image size={20} />}
                             </div>
                           )}
                         </div>
                         <div className="min-w-0">
-                          <p className="truncate font-medium" style={{ color: "var(--ink)" }} title={file.name}>{file.name}</p>
-                          <p className="mt-1 text-xs uppercase tracking-wide" style={{ color: "var(--muted)" }}>
-                            {file.mimeType.startsWith("video/") ? "Video" : "Image"} · {file.createdTime ? new Date(file.createdTime).toLocaleString() : "—"}
+                          <p className="truncate text-sm font-medium" style={{ color: "var(--ink)" }} title={file.name}>{file.name}</p>
+                          <p className="mt-0.5 text-[11px] uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+                            {file.mimeType.startsWith("video/") ? "Video" : "Image"}
+                            {file.createdTime ? ` · ${new Date(file.createdTime).toLocaleDateString()}` : ""}
                           </p>
-                          {imported && <p className="mt-1 text-xs font-medium" style={{ color: "var(--ok)" }}>Already imported</p>}
+                          {imported && <p className="mt-1 text-[11px] font-semibold" style={{ color: "var(--ok)" }}>Already imported</p>}
                         </div>
-                        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                        <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                           {file.webViewLink && (
                             <a href={file.webViewLink} target="_blank" rel="noreferrer" className="btn-secondary text-xs">Open</a>
                           )}
-                          <button onClick={() => importFile(file)} disabled={importingFileIds.has(file.id)} className="btn-primary text-xs disabled:opacity-60">
-                            {importingFileIds.has(file.id) ? "Importing..." : imported ? "Re-import" : "Import"}
+                          <button
+                            onClick={() => importFile(file)}
+                            disabled={importingFileIds.has(file.id)}
+                            className="btn-primary text-xs disabled:opacity-60"
+                          >
+                            {importingFileIds.has(file.id) ? "…" : imported ? "Re-import" : "Import"}
                           </button>
                         </div>
                       </article>
@@ -688,62 +758,100 @@ export function DriveBrowserPage() {
                   })}
                 </div>
               ) : (
-                <div className={`grid ${viewMode === "large" ? "gap-4 sm:grid-cols-2 xl:grid-cols-3" : viewMode === "medium" ? "gap-3 sm:grid-cols-3 xl:grid-cols-4" : "gap-2 sm:grid-cols-4 xl:grid-cols-6"}`}>
+                /* ── Grid views ── */
+                <div className={gridClass(viewMode)}>
                   {mediaFiles.map((file, index) => {
                     const selected = selectedFileIds.includes(file.id);
                     const imported = importedDriveFileIds.has(file.id);
+                    const isSmall  = viewMode === "small";
+
                     return (
                       <article
                         key={file.id}
-                        onClick={(event) => toggleFileSelection(file, index, event)}
-                        className="cursor-pointer overflow-hidden rounded-[14px] transition"
+                        onClick={(e) => toggleFileSelection(file, index, e)}
+                        className="cursor-pointer overflow-hidden rounded-[12px] transition"
                         style={{
                           background: "var(--surface)",
-                          border: `1px solid ${selected ? "var(--info)" : "var(--line)"}`,
+                          border: `1.5px solid ${selected ? "var(--info)" : "var(--line)"}`,
                           outline: selected ? "2px solid var(--info)" : "none",
                           outlineOffset: "2px",
                         }}
                       >
-                        <div
-                          className="relative"
-                          style={{
-                            height: viewMode === "large" ? 320 : viewMode === "medium" ? 208 : 128,
-                            background: "var(--bg-2)",
-                          }}
-                        >
+                        {/* Thumbnail — always square */}
+                        <div className="relative" style={{ aspectRatio: "1", background: "var(--bg-2)" }}>
                           {file.mimeType.startsWith("image/") && file.previewUrl ? (
-                            <img src={resolveApiAssetUrl(file.previewUrl)} alt={file.name} className="h-full w-full object-cover" />
+                            <img
+                              src={resolveApiAssetUrl(file.previewUrl)}
+                              alt={file.name}
+                              className="h-full w-full object-cover"
+                            />
                           ) : (
-                            <div className="flex h-full items-center justify-center text-xs font-medium" style={{ color: "var(--muted)" }}>
-                              {file.mimeType.startsWith("video/") ? "Video preview" : "No preview"}
+                            <div className="flex h-full items-center justify-center" style={{ color: "var(--muted)" }}>
+                              {file.mimeType.startsWith("video/") ? <Icons.Film size={isSmall ? 18 : 28} /> : <Icons.Image size={isSmall ? 18 : 28} />}
                             </div>
                           )}
+
+                          {/* Imported badge */}
                           {imported && (
-                            <span className="absolute right-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide" style={{ color: "var(--ok)" }}>
-                              Imported
+                            <span
+                              className="absolute right-1.5 top-1.5 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide"
+                              style={{ background: "var(--ok)", color: "white" }}
+                            >
+                              ✓
                             </span>
                           )}
+
+                          {/* Selected overlay */}
+                          {selected && (
+                            <div
+                              className="absolute inset-0"
+                              style={{ background: "rgba(99,102,241,0.18)" }}
+                            >
+                              <div
+                                className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full"
+                                style={{ background: "var(--info)" }}
+                              >
+                                <Icons.Check size={11} style={{ color: "white" }} />
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className={`${viewMode === "small" ? "space-y-2 p-2.5" : "space-y-3 p-3.5"} min-w-0`}>
-                          <div>
-                            <p className={`${viewMode === "small" ? "line-clamp-1 text-sm" : "line-clamp-2"} font-medium break-words`} style={{ color: "var(--ink)" }} title={file.name}>
+
+                        {/* Card footer */}
+                        <div className={isSmall ? "p-1.5" : "p-2.5 space-y-2"}>
+                          {!isSmall && (
+                            <p
+                              className="line-clamp-1 text-[12px] font-medium"
+                              style={{ color: "var(--ink)" }}
+                              title={file.name}
+                            >
                               {file.name}
                             </p>
-                            <p className="mt-1 text-[11px] uppercase tracking-wide" style={{ color: "var(--muted)" }}>
-                              {file.mimeType.startsWith("video/") ? "Video" : "Image"}
-                            </p>
-                            {viewMode !== "small" && (
-                              <p className="mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                                {file.createdTime ? new Date(file.createdTime).toLocaleString() : "—"}
-                              </p>
+                          )}
+                          <div
+                            className={`flex gap-1.5 ${isSmall ? "" : ""}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {!isSmall && file.webViewLink && (
+                              <a
+                                href={file.webViewLink}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn-secondary flex-1 justify-center py-1 text-[11px]"
+                              >
+                                Open
+                              </a>
                             )}
-                          </div>
-                          <div className="flex gap-2" onClick={(event) => event.stopPropagation()}>
-                            {file.webViewLink && (
-                              <a href={file.webViewLink} target="_blank" rel="noreferrer" className="btn-secondary flex-1 justify-center text-xs">Open</a>
-                            )}
-                            <button onClick={() => importFile(file)} disabled={importingFileIds.has(file.id)} className="btn-primary flex-1 justify-center text-xs disabled:opacity-60">
-                              {importingFileIds.has(file.id) ? "Importing..." : imported ? "Re-import" : "Import"}
+                            <button
+                              onClick={() => importFile(file)}
+                              disabled={importingFileIds.has(file.id)}
+                              className={`btn-primary ${isSmall ? "w-full" : "flex-1"} justify-center py-1 text-[11px] disabled:opacity-60`}
+                            >
+                              {importingFileIds.has(file.id)
+                                ? "…"
+                                : isSmall
+                                  ? imported ? "✓" : "+"
+                                  : imported ? "Re-import" : "Import"}
                             </button>
                           </div>
                         </div>
@@ -761,7 +869,7 @@ export function DriveBrowserPage() {
                     disabled={isFetchingData || isFetchingMoreFiles}
                     className="btn-secondary disabled:opacity-50"
                   >
-                    {isFetchingMoreFiles ? "Loading more..." : "Load more"}
+                    {isFetchingMoreFiles ? "Loading more…" : "Load more"}
                   </button>
                 </div>
               )}
@@ -775,7 +883,10 @@ export function DriveBrowserPage() {
 
 function DriveEmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-[14px] border-2 border-dashed p-10 text-center text-sm" style={{ borderColor: "var(--line-2)", color: "var(--muted)" }}>
+    <div
+      className="rounded-[14px] border-2 border-dashed p-10 text-center text-sm"
+      style={{ borderColor: "var(--line-2)", color: "var(--muted)" }}
+    >
       {text}
     </div>
   );
@@ -783,9 +894,13 @@ function DriveEmptyState({ text }: { text: string }) {
 
 function LoadingGrid() {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <div key={index} className="h-72 animate-pulse rounded-[18px]" style={{ background: "var(--bg-2)" }} />
+    <div className="grid gap-2 grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6">
+      {Array.from({ length: 18 }).map((_, i) => (
+        <div
+          key={i}
+          className="animate-pulse overflow-hidden rounded-[12px]"
+          style={{ aspectRatio: "1", background: "var(--bg-2)" }}
+        />
       ))}
     </div>
   );
@@ -798,7 +913,7 @@ function FolderNode({
   selectedFolderId,
   onToggle,
   onSelect,
-  depth = 0
+  depth = 0,
 }: {
   folder: DriveFolder;
   folderTree: Record<string, DriveFolder[]>;
@@ -810,7 +925,7 @@ function FolderNode({
 }) {
   const isExpanded = expandedFolderIds.has(folder.id);
   const isSelected = selectedFolderId === folder.id;
-  const children = folderTree[folder.id] || [];
+  const children   = folderTree[folder.id] || [];
 
   return (
     <div>
@@ -819,7 +934,7 @@ function FolderNode({
         style={{
           paddingLeft: `${depth * 12 + 8}px`,
           background: isSelected ? "var(--accent-soft)" : "transparent",
-          color: isSelected ? "var(--accent)" : "var(--ink-2)",
+          color:      isSelected ? "var(--accent)"      : "var(--ink-2)",
         }}
         onClick={() => onSelect(folder)}
         onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "var(--bg)"; }}
@@ -836,7 +951,10 @@ function FolderNode({
           <p className="truncate">{folder.name}</p>
         </div>
         {folder.owner && (
-          <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide" style={{ background: "var(--info-soft)", color: "var(--info)" }}>
+          <span
+            className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide"
+            style={{ background: "var(--info-soft)", color: "var(--info)" }}
+          >
             Shared
           </span>
         )}
@@ -844,7 +962,7 @@ function FolderNode({
 
       {isExpanded && children.length > 0 && (
         <div>
-          {children.map(child => (
+          {children.map((child) => (
             <FolderNode
               key={child.id}
               folder={child}
@@ -859,7 +977,10 @@ function FolderNode({
         </div>
       )}
       {isExpanded && !folderTree[folder.id] && (
-        <div className="py-1 text-xs italic" style={{ paddingLeft: `${depth * 12 + 32}px`, color: "var(--muted)" }}>
+        <div
+          className="py-1 text-xs italic"
+          style={{ paddingLeft: `${depth * 12 + 32}px`, color: "var(--muted)" }}
+        >
           Loading…
         </div>
       )}

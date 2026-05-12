@@ -29,10 +29,10 @@ npm install
 docker compose up -d
 ```
 
-3. Start both apps:
+3. **Start the app with the tunnel script** (required for Instagram publishing):
 
 ```bash
-npm run dev:all
+./start.sh
 ```
 
 4. Open the frontend:
@@ -40,6 +40,27 @@ npm run dev:all
 ```bash
 http://localhost:5173
 ```
+
+## Tunnel Setup (Required for Instagram Publishing)
+
+Instagram's Graph API must **fetch the media file** from a public URL during container creation. `localhost` is not reachable from Meta servers. The startup script uses Cloudflare Tunnel to expose the local API on a temporary public HTTPS URL.
+
+**Always start the app with:**
+```bash
+./start.sh
+```
+
+This script:
+1. Starts a Cloudflare quick tunnel pointing to `localhost:4000`
+2. Reads the generated `*.trycloudflare.com` URL
+3. Writes it to `apps/api/.env` as `PUBLIC_API_URL`
+4. Starts API + Web (`npm run dev:all`)
+
+**Each restart gets a new tunnel URL** — free quick tunnels are temporary. The script updates the env automatically; no manual step needed.
+
+**For production:** Use a permanent Cloudflare named tunnel or deploy to a public HTTPS host.
+
+**Without tunnel:** Publishing will fail with "Instagram could not fetch the media URL" because Meta cannot reach `http://localhost:4000`.
 
 ## Instagram OAuth Setup (Meta)
 

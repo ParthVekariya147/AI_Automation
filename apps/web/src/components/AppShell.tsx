@@ -20,7 +20,6 @@ const navGroups: NavGroup[] = [
     label: "Pipeline",
     items: [
       { to: "/drive-browser", label: "Drive", icon: <Icons.Drive size={15} /> },
-      { to: "/queue", label: "Queue", icon: <Icons.Layers size={15} /> },
       { to: "/automations", label: "Automations", icon: <Icons.Bolt size={15} /> },
     ],
   },
@@ -310,7 +309,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         {/* Page content */}
-        <main className="flex-1 min-w-0 p-5 lg:p-7">
+        <main className="flex-1 min-w-0 p-4 lg:p-5">
           {children}
         </main>
       </div>

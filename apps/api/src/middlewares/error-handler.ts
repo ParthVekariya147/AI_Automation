@@ -29,6 +29,10 @@ export function errorHandler(
 
   const statusCode = error instanceof ApiError ? error.statusCode : error.statusCode ?? 500;
 
+  if (statusCode >= 500) {
+    console.error("[error]", error.message, error.stack);
+  }
+
   res.status(statusCode).json({
     success: false,
     message: error.message || "Internal server error"

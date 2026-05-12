@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+is #!/usr/bin/env bash
 # start.sh — ONE command: tunnel + API + Web
 # Uses tunnel.sh logic then starts all services in the same terminal.
 
@@ -6,7 +6,7 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$ROOT/apps/api/.env"
-TUNNEL_LOG="$(mktemp /tmp/cloudflared-XXXXXX.log)"
+TUNNEL_LOG="$(mktemp /tmp/cloudflared-XXXXXX)"
 API_PORT=4000
 TUNNEL_PID=""
 SERVICES_PID=""

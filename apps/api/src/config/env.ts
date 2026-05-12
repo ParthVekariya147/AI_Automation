@@ -13,6 +13,7 @@ const envSchema = z.object({
   UPLOAD_DIR: z.string().default("uploads"),
   CORS_ORIGINS: z.string().default("http://localhost:5173"),
   GEMINI_API_KEY: z.string().optional().default(""),
+  GEMINI_API_KEYS: z.string().optional().default(""),
   GOOGLE_CLIENT_ID: z.string().optional().default(""),
   GOOGLE_CLIENT_SECRET: z.string().optional().default(""),
   GOOGLE_REDIRECT_URI: z.string().url().optional().default("http://localhost:4000/api/google-drive/oauth/callback"),
@@ -29,7 +30,7 @@ const envSchema = z.object({
   GOOGLE_DRIVE_SCOPES: z
     .string()
     .default(
-      "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/userinfo.email"
+      "https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email"
     )
 });
 

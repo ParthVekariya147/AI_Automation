@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Panel } from "../components/Panel";
 import { useToast } from "../components/ToastProvider";
 import { CountdownBadge } from "../components/queue/CountdownBadge";
@@ -21,12 +21,12 @@ const POST_TYPES = ["single", "carousel", "video", "reel"] as const;
 export function QueueDetailPage() {
   const queryClient = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const { id } = useParams();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
 
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
   const [aiCaption, setAiCaption] = useState("");
   const [hashtags, setHashtags] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<"preview" | "metadata" | "activity">("preview");
@@ -74,27 +74,18 @@ export function QueueDetailPage() {
     try {
       const res = await api.post(`/media/${id}/generate-caption`, { businessId: activeBusinessId });
       const caption = res.data?.data?.caption || res.data?.data?.asset?.aiCaption || "";
+      const newHashtags: string[] = res.data?.data?.hashtags ?? [];
       setAiCaption(caption);
+      if (newHashtags.length) {
+        setHashtags(newHashtags);
+        await updateAsset({ aiCaption: caption, hashtags: newHashtags });
+      }
       queryClient.invalidateQueries({ queryKey: ["queue-detail", id, activeBusinessId] });
-      toast({ tone: "success", title: "Caption generated" });
+      toast({ tone: "success", title: "Caption & hashtags generated" });
     } catch (error) {
       toast({ tone: "error", title: "Generation failed", description: extractApiError(error, "Could not generate caption.") });
     } finally {
       setGenerating(false);
-    }
-  }
-
-  async function suggestHashtags(): Promise<string[]> {
-    if (!id || !activeBusinessId) return [];
-    setSuggesting(true);
-    try {
-      const res = await api.post(`/media/${id}/suggest-hashtags`, { businessId: activeBusinessId });
-      return res.data?.data?.hashtags ?? [];
-    } catch (error) {
-      toast({ tone: "error", title: "Hashtag suggestion failed", description: extractApiError(error, "") });
-      return [];
-    } finally {
-      setSuggesting(false);
     }
   }
 
@@ -126,18 +117,45 @@ export function QueueDetailPage() {
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <StatusPill status={asset.workflowStatus as WorkflowStatus} pulse />
             {asset.scheduledTime && <CountdownBadge scheduledTime={asset.scheduledTime} />}
+            {asset.fitDimensions?.wasFitted && (
+              <span
+                title="Your original image was outside Instagram's allowed range. We added a blurred border so the full image shows uncropped."
+                className="cursor-help rounded-full px-2 py-0.5 text-xs font-medium"
+                style={{ background: "#e8f4fd", color: "#0077cc", border: "1px solid #b3d7f5" }}
+              >
+                Padded for Instagram
+              </span>
+            )}
           </div>
         </div>
-        {openUrl && (
-          <a
-            href={openUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="shrink-0 rounded-full bg-[#10332b] px-5 py-2.5 text-sm font-medium text-white"
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={() =>
+              navigate("/posts", {
+                state: {
+                  mediaIds: [asset._id],
+                  postType: asset.postType,
+                  aiCaption: aiCaption || asset.aiCaption,
+                  groupId: asset.groupId,
+                },
+              })
+            }
+            className="rounded-full border border-emerald-400 bg-emerald-50 px-5 py-2.5 text-sm font-medium text-emerald-800 transition hover:bg-emerald-100"
           >
-            Open original
-          </a>
-        )}
+            Open in Posts →
+          </button>
+          {openUrl && (
+            <a
+              href={openUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full bg-[#10332b] px-5 py-2.5 text-sm font-medium text-white text-center"
+            >
+              Open original
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Past schedule warning */}
@@ -331,8 +349,6 @@ export function QueueDetailPage() {
                 setHashtags(tags);
                 updateAsset({ hashtags: tags });
               }}
-              onSuggest={suggestHashtags}
-              suggesting={suggesting}
             />
           </section>
 

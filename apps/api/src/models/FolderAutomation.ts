@@ -7,14 +7,21 @@ export interface IFolderAutomation extends Document {
   igAccountId: Types.ObjectId;
   collaborators: string[];       // IG handles without @
 
-  groupingMode: "subfolder" | "filename_prefix" | "manual" | "batch_size";
+  groupingMode: "one_per_file" | "batch_size" | "subfolder";
   batchSize: number;             // used when groupingMode = batch_size
   carouselMaxSize: number;       // default 10, hard cap
 
-  cadence: {
-    type: "fixed_time" | "slots" | "smart" | "interval";
-    fixedTime?: string;          // "11:00"
-    slots?: string[];            // ["09:00", "13:00", "18:00"]
+  // New flat cadence fields (replaces nested cadence sub-doc)
+  cadenceMode: "interval" | "daily_slots" | "smart";
+  intervalValue?: number;        // e.g. 5
+  intervalUnit?: "minutes" | "hours" | "days";
+  dailySlots?: string[];         // ["09:00", "14:00", "18:00"]
+
+  // Legacy cadence sub-doc kept for migration fallback reads
+  cadence?: {
+    type?: string;
+    fixedTime?: string;
+    slots?: string[];
     intervalHours?: number;
   };
 
@@ -28,6 +35,7 @@ export interface IFolderAutomation extends Document {
 
   lastFetchedAt?: Date;
   finishedAt?: Date;
+  lastRunError?: string;
   createdBy: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -41,12 +49,18 @@ const FolderAutomationSchema = new Schema<IFolderAutomation>(
     igAccountId: { type: Schema.Types.ObjectId, ref: "InstagramAccount", required: true },
     collaborators: { type: [String], default: [] },
 
-    groupingMode: { type: String, enum: ["subfolder", "filename_prefix", "manual", "batch_size"], required: true },
+    groupingMode: { type: String, enum: ["one_per_file", "batch_size", "subfolder"], required: true },
     batchSize: { type: Number, default: 1 },
     carouselMaxSize: { type: Number, default: 10 },
 
+    cadenceMode: { type: String, enum: ["interval", "daily_slots", "smart"], default: "smart" },
+    intervalValue: Number,
+    intervalUnit: { type: String, enum: ["minutes", "hours", "days"] },
+    dailySlots: [String],
+
+    // Legacy sub-doc kept for backward-compat reads during migration
     cadence: {
-      type: { type: String, enum: ["fixed_time", "slots", "smart", "interval"], required: true },
+      type: { type: String },
       fixedTime: String,
       slots: [String],
       intervalHours: Number,
@@ -62,6 +76,7 @@ const FolderAutomationSchema = new Schema<IFolderAutomation>(
 
     lastFetchedAt: Date,
     finishedAt: Date,
+    lastRunError: { type: String, trim: true },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: true }

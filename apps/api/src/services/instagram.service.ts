@@ -69,71 +69,6 @@ function buildFacebookGraphUrl(path: string, query: Record<string, string | unde
   return url.toString();
 }
 
-async function postFacebookGraph(
-  path: string,
-  params: Record<string, string | undefined>
-): Promise<Response> {
-  const base = env.facebookGraphBaseUrl.endsWith("/")
-    ? env.facebookGraphBaseUrl
-    : `${env.facebookGraphBaseUrl}/`;
-  const url = new URL(path.replace(/^\/+/, ""), base);
-
-  const body = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== "") {
-      body.append(key, value);
-    }
-  }
-
-  return fetch(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString()
-  });
-}
-
-export function sanitizeCollaborators(raw: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const u of raw) {
-    const stripped = u.trim().replace(/^@/, "");
-    if (!stripped) continue;
-    if (/[\s"'<>]/.test(stripped)) {
-      console.warn(`[collaborators] skipping invalid username: "${u}"`);
-      continue;
-    }
-    if (!seen.has(stripped)) {
-      seen.add(stripped);
-      result.push(stripped);
-    }
-  }
-  if (result.length > 3) {
-    console.warn(`[collaborators] more than 3 provided — truncating to first 3`);
-    return result.slice(0, 3);
-  }
-  return result;
-}
-
-export async function fetchCollaboratorStatus(
-  igMediaId: string,
-  accessToken: string
-): Promise<Array<{ username: string; status: string }>> {
-  const url = buildFacebookGraphUrl(`${igMediaId}/collaborators`, {
-    access_token: accessToken
-  });
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await readJsonMap(res, "Instagram collaborator status");
-  const entries = data.data;
-  if (!Array.isArray(entries)) return [];
-  return entries
-    .filter((e): e is Record<string, unknown> => Boolean(e) && typeof e === "object")
-    .map((e) => ({
-      username: typeof e.username === "string" ? e.username : String(e.id ?? ""),
-      status: typeof e.invite_status === "string" ? e.invite_status : "Unknown"
-    }));
-}
-
 export function ensureFacebookConfigured() {
   const missingEnvKeys: string[] = [];
   if (!env.FACEBOOK_APP_ID.trim()) {
@@ -392,201 +327,204 @@ export async function fetchConnectedInstagramAccounts(accessToken: string) {
   return Array.from(igAccountsById.values());
 }
 
-export async function postSingleMedia(igUserId: string, accessToken: string, imageUrl: string, caption: string, collaborators?: string[]) {
-  const containerParams: Record<string, string | undefined> = {
-    image_url: imageUrl,
-    caption,
-    access_token: accessToken,
-    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
-  };
-  console.log("[IG] postSingleMedia container params:", {
-    ...containerParams,
-    access_token: "***",
-    collaborators: containerParams.collaborators
-  });
-  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
-  if (!createRes.ok) throw new ApiError(400, `Failed to create media container: ${await createRes.text()}`);
-  const createData = await readJsonMap(createRes, "Instagram media container creation");
-  const containerId = readRequiredString(createData, "id", "Instagram media container creation");
+export function sanitizeCollaborators(handles: string[]): string[] {
+  return handles.map((h) => h.replace(/^@/, "").trim()).filter(Boolean);
+}
 
-  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
-    creation_id: containerId,
-    access_token: accessToken
-  });
-  if (!publishRes.ok) throw new ApiError(400, `Failed to publish media: ${await publishRes.text()}`);
-  const publishData = await readJsonMap(publishRes, "Instagram media publish");
-  const externalPostId = readRequiredString(publishData, "id", "Instagram media publish");
+async function pollContainerStatus(containerId: string, accessToken: string, context: string) {
+  const MAX_ATTEMPTS = 24; // 2 minutes max
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const statusUrl = buildFacebookGraphUrl(containerId, {
+      fields: "status_code",
+      access_token: accessToken
+    });
+    const statusRes = await fetch(statusUrl);
+    if (!statusRes.ok) throw new ApiError(400, `Failed to check ${context} status: ${await statusRes.text()}`);
+    const statusData = await readJsonMap(statusRes, `${context} status`);
+    const status = readRequiredString(statusData, "status_code", `${context} status`);
+    if (status === "FINISHED") return;
+    if (status === "ERROR") throw new ApiError(400, `${context} processing failed on Meta.`);
+    // IN_PROGRESS or PUBLISHED — keep waiting
+  }
+  throw new ApiError(400, `${context} processing timed out after 2 minutes.`);
+}
 
+async function publishWithRetry(
+  containerId: string,
+  igUserId: string,
+  accessToken: string,
+  context: string
+): Promise<string> {
+  const MAX_ATTEMPTS = 12; // 1 minute max, 5s between retries
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 5000));
+    const publishRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media_publish`, {
+      creation_id: containerId,
+      access_token: accessToken
+    }), { method: "POST" });
+
+    if (publishRes.ok) {
+      const data = await readJsonMap(publishRes, `${context} publish`);
+      return readRequiredString(data, "id", `${context} publish`);
+    }
+
+    const errorText = await publishRes.text();
+    // Retry on "media not ready" (2207027) or Instagram transient server errors (is_transient)
+    const isTransient = errorText.includes("2207027") || errorText.includes('"is_transient":true');
+    if (isTransient && attempt < MAX_ATTEMPTS - 1) {
+      console.log(`[IG] ${context} transient error, retrying (${attempt + 1}/${MAX_ATTEMPTS})…`);
+      continue;
+    }
+    throw new ApiError(400, `Failed to publish ${context}: ${errorText}`);
+  }
+  throw new ApiError(400, `${context} publish timed out — container never became ready.`);
+}
+
+async function fetchPermalink(externalPostId: string, accessToken: string, context: string) {
   const nodeUrl = buildFacebookGraphUrl(externalPostId, {
     fields: "permalink",
     access_token: accessToken
   });
   const nodeRes = await fetch(nodeUrl);
-  const nodeData = await readJsonMap(nodeRes, "Instagram media node lookup");
-  const permalink = readRequiredString(nodeData, "permalink", "Instagram media node lookup");
-
-  return { externalPostId, permalink };
+  const nodeData = await readJsonMap(nodeRes, `${context} node lookup`);
+  return readRequiredString(nodeData, "permalink", `${context} node lookup`);
 }
 
-export async function postVideoMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
-  const containerParams: Record<string, string | undefined> = {
+export async function postSingleMedia(
+  igUserId: string,
+  accessToken: string,
+  imageUrl: string,
+  caption: string,
+  collaborators?: string[]
+) {
+  const query: Record<string, string | undefined> = {
+    image_url: imageUrl,
+    caption,
+    access_token: accessToken
+  };
+  if (collaborators?.length) query.collaborators = JSON.stringify(collaborators);
+
+  const createRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media`, query), { method: "POST" });
+  if (!createRes.ok) throw new ApiError(400, `Failed to create media container: ${await createRes.text()}`);
+  const containerId = readRequiredString(
+    await readJsonMap(createRes, "Instagram media container creation"),
+    "id", "Instagram media container creation"
+  );
+
+  const externalPostId = await publishWithRetry(containerId, igUserId, accessToken, "image");
+  return { externalPostId, permalink: await fetchPermalink(externalPostId, accessToken, "Instagram media") };
+}
+
+export async function postVideoMedia(
+  igUserId: string,
+  accessToken: string,
+  videoUrl: string,
+  caption: string,
+  collaborators?: string[]
+) {
+  const query: Record<string, string | undefined> = {
     video_url: videoUrl,
     media_type: "VIDEO",
     caption,
-    access_token: accessToken,
-    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+    access_token: accessToken
   };
-  console.log("[IG] postVideoMedia container params:", {
-    ...containerParams,
-    access_token: "***",
-    collaborators: containerParams.collaborators
-  });
-  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
+  if (collaborators?.length) query.collaborators = JSON.stringify(collaborators);
+
+  const createRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media`, query), { method: "POST" });
   if (!createRes.ok) throw new ApiError(400, `Failed to create video container: ${await createRes.text()}`);
-  const createData = await readJsonMap(createRes, "Instagram video container creation");
-  const containerId = readRequiredString(createData, "id", "Instagram video container creation");
+  const containerId = readRequiredString(
+    await readJsonMap(createRes, "Instagram video container creation"),
+    "id", "Instagram video container creation"
+  );
 
-  let status = "IN_PROGRESS";
-  let attempts = 0;
-  while (status === "IN_PROGRESS" && attempts < 24) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    attempts++;
-    const statusUrl = buildFacebookGraphUrl(containerId, {
-      fields: "status_code",
-      access_token: accessToken
-    });
-    const statusRes = await fetch(statusUrl);
-    if (!statusRes.ok) {
-      throw new ApiError(400, `Failed to check video status: ${await statusRes.text()}`);
-    }
-    const statusData = await readJsonMap(statusRes, "Instagram video status");
-    status = readRequiredString(statusData, "status_code", "Instagram video status");
-    if (status === "FINISHED") break;
-    if (status === "ERROR") throw new ApiError(400, "Video processing failed on Meta.");
-  }
-  if (status !== "FINISHED") throw new ApiError(400, "Video processing timed out after 2 minutes.");
-
-  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
-    creation_id: containerId,
-    access_token: accessToken
-  });
-  if (!publishRes.ok) throw new ApiError(400, `Failed to publish video: ${await publishRes.text()}`);
-  const publishData = await readJsonMap(publishRes, "Instagram video publish");
-  const externalPostId = readRequiredString(publishData, "id", "Instagram video publish");
-
-  const nodeUrl = buildFacebookGraphUrl(externalPostId, {
-    fields: "permalink",
-    access_token: accessToken
-  });
-  const nodeRes = await fetch(nodeUrl);
-  const nodeData = await readJsonMap(nodeRes, "Instagram video node lookup");
-  const permalink = readRequiredString(nodeData, "permalink", "Instagram video node lookup");
-
-  return { externalPostId, permalink };
+  await pollContainerStatus(containerId, accessToken, "video");
+  const externalPostId = await publishWithRetry(containerId, igUserId, accessToken, "video");
+  return { externalPostId, permalink: await fetchPermalink(externalPostId, accessToken, "Instagram video") };
 }
 
-export async function postReelsMedia(igUserId: string, accessToken: string, videoUrl: string, caption: string, collaborators?: string[]) {
-  const containerParams: Record<string, string | undefined> = {
+export async function postReelsMedia(
+  igUserId: string,
+  accessToken: string,
+  videoUrl: string,
+  caption: string,
+  collaborators?: string[]
+) {
+  const query: Record<string, string | undefined> = {
     video_url: videoUrl,
     media_type: "REELS",
     caption,
-    access_token: accessToken,
-    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+    access_token: accessToken
   };
-  console.log("[IG] postReelsMedia container params:", {
-    ...containerParams,
-    access_token: "***",
-    collaborators: containerParams.collaborators
-  });
-  const createRes = await postFacebookGraph(`${igUserId}/media`, containerParams);
-  if (!createRes.ok) throw new ApiError(400, `Failed to create Reels container: ${await createRes.text()}`);
-  const createData = await readJsonMap(createRes, "Instagram Reels container creation");
-  const containerId = readRequiredString(createData, "id", "Instagram Reels container creation");
+  if (collaborators?.length) query.collaborators = JSON.stringify(collaborators);
 
-  let status = "IN_PROGRESS";
-  let attempts = 0;
-  while (status === "IN_PROGRESS" && attempts < 24) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    attempts++;
-    const statusUrl = buildFacebookGraphUrl(containerId, {
-      fields: "status_code",
-      access_token: accessToken
-    });
-    const statusRes = await fetch(statusUrl);
-    if (!statusRes.ok) throw new ApiError(400, `Failed to check Reels status: ${await statusRes.text()}`);
-    const statusData = await readJsonMap(statusRes, "Instagram Reels status");
-    status = readRequiredString(statusData, "status_code", "Instagram Reels status");
-    if (status === "FINISHED") break;
-    if (status === "ERROR") throw new ApiError(400, "Reels processing failed on Meta.");
-  }
-  if (status !== "FINISHED") throw new ApiError(400, "Reels processing timed out after 2 minutes.");
+  const createRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media`, query), { method: "POST" });
+  if (!createRes.ok) throw new ApiError(400, `Failed to create reels container: ${await createRes.text()}`);
+  const containerId = readRequiredString(
+    await readJsonMap(createRes, "Instagram reels container creation"),
+    "id", "Instagram reels container creation"
+  );
 
-  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
-    creation_id: containerId,
-    access_token: accessToken
-  });
-  if (!publishRes.ok) throw new ApiError(400, `Failed to publish Reels: ${await publishRes.text()}`);
-  const publishData = await readJsonMap(publishRes, "Instagram Reels publish");
-  const externalPostId = readRequiredString(publishData, "id", "Instagram Reels publish");
-
-  const nodeUrl = buildFacebookGraphUrl(externalPostId, {
-    fields: "permalink",
-    access_token: accessToken
-  });
-  const nodeRes = await fetch(nodeUrl);
-  const nodeData = await readJsonMap(nodeRes, "Instagram Reels node lookup");
-  const permalink = readRequiredString(nodeData, "permalink", "Instagram Reels node lookup");
-
-  return { externalPostId, permalink };
+  await pollContainerStatus(containerId, accessToken, "reels");
+  const externalPostId = await publishWithRetry(containerId, igUserId, accessToken, "reels");
+  return { externalPostId, permalink: await fetchPermalink(externalPostId, accessToken, "Instagram reels") };
 }
 
-export async function postCarouselMedia(igUserId: string, accessToken: string, imageUrls: string[], caption: string, collaborators?: string[]) {
+export async function postCarouselMedia(
+  igUserId: string,
+  accessToken: string,
+  imageUrls: string[],
+  caption: string,
+  collaborators?: string[]
+) {
   const childIds: string[] = [];
 
   for (const url of imageUrls) {
-    const createChildRes = await postFacebookGraph(`${igUserId}/media`, {
+    const createChildRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media`, {
       image_url: url,
       is_carousel_item: "true",
       access_token: accessToken
-    });
+    }), { method: "POST" });
     if (!createChildRes.ok) throw new ApiError(400, `Failed to create carousel child: ${await createChildRes.text()}`);
-    const createChildData = await readJsonMap(createChildRes, "Instagram carousel child creation");
-    const childId = readRequiredString(createChildData, "id", "Instagram carousel child creation");
-    childIds.push(childId);
+    childIds.push(readRequiredString(
+      await readJsonMap(createChildRes, "Instagram carousel child creation"),
+      "id", "Instagram carousel child creation"
+    ));
   }
 
-  const parentParams: Record<string, string | undefined> = {
+  const query: Record<string, string | undefined> = {
     media_type: "CAROUSEL",
     children: childIds.join(","),
     caption,
-    access_token: accessToken,
-    ...(collaborators?.length ? { collaborators: JSON.stringify(collaborators) } : {})
+    access_token: accessToken
   };
-  console.log("[IG] postCarouselMedia parent container params:", {
-    ...parentParams,
-    access_token: "***",
-    collaborators: parentParams.collaborators
-  });
-  const createRes = await postFacebookGraph(`${igUserId}/media`, parentParams);
+  if (collaborators?.length) query.collaborators = JSON.stringify(collaborators);
+
+  const createRes = await fetch(buildFacebookGraphUrl(`${igUserId}/media`, query), { method: "POST" });
   if (!createRes.ok) throw new ApiError(400, `Failed to create carousel container: ${await createRes.text()}`);
-  const createData = await readJsonMap(createRes, "Instagram carousel container creation");
-  const containerId = readRequiredString(createData, "id", "Instagram carousel container creation");
+  const containerId = readRequiredString(
+    await readJsonMap(createRes, "Instagram carousel container creation"),
+    "id", "Instagram carousel container creation"
+  );
 
-  const publishRes = await postFacebookGraph(`${igUserId}/media_publish`, {
-    creation_id: containerId,
+  const externalPostId = await publishWithRetry(containerId, igUserId, accessToken, "carousel");
+  return { externalPostId, permalink: await fetchPermalink(externalPostId, accessToken, "Instagram carousel") };
+}
+
+export async function fetchCollaboratorStatus(
+  mediaId: string,
+  accessToken: string
+): Promise<Array<{ username: string; status: string }>> {
+  const url = buildFacebookGraphUrl(`${mediaId}/collaborators`, {
+    fields: "username,invite_status",
     access_token: accessToken
   });
-  if (!publishRes.ok) throw new ApiError(400, `Failed to publish carousel: ${await publishRes.text()}`);
-  const publishData = await readJsonMap(publishRes, "Instagram carousel publish");
-  const externalPostId = readRequiredString(publishData, "id", "Instagram carousel publish");
-
-  const nodeUrl = buildFacebookGraphUrl(externalPostId, {
-    fields: "permalink",
-    access_token: accessToken
-  });
-  const nodeRes = await fetch(nodeUrl);
-  const nodeData = await readJsonMap(nodeRes, "Instagram carousel node lookup");
-  const permalink = readRequiredString(nodeData, "permalink", "Instagram carousel node lookup");
-
-  return { externalPostId, permalink };
+  const res = await fetch(url);
+  if (!res.ok) throw new ApiError(400, `Failed to fetch collaborator status: ${await res.text()}`);
+  const data = await readJsonMap(res, "collaborator status");
+  const items = data.data;
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter((item): item is Record<string, string> => typeof item === "object" && item !== null)
+    .map((item) => ({ username: item.username ?? "", status: item.invite_status ?? "unknown" }));
 }

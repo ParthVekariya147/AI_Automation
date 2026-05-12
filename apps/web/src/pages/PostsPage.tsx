@@ -38,7 +38,8 @@ const STATUS_BADGE_STYLE: Record<string, { bg: string; color: string }> = {
   scheduled: { bg: "var(--info-soft)", color: "var(--info)" },
   posting: { bg: "var(--warn-soft)", color: "var(--warn)" },
   live: { bg: "var(--ok-soft)", color: "var(--ok)" },
-  error: { bg: "var(--err-soft)", color: "var(--err)" }
+  error: { bg: "var(--err-soft)", color: "var(--err)" },
+  manual_review: { bg: "#fff3e0", color: "#e65100" }
 };
 
 type TabId = "all" | "new" | "scheduled" | "live" | "manual_review";
@@ -52,6 +53,7 @@ interface LocationState {
 }
 
 function findPreviewUrl(post: PostDraft, allMedia: MediaAsset[]): string {
+  if (post.status === "live" && post.livePostThumbnailUrl) return post.livePostThumbnailUrl;
   const firstId = post.mediaAssetIds?.[0]?._id;
   if (firstId) {
     const full = allMedia.find((m) => m._id === firstId);
@@ -112,7 +114,7 @@ export function PostsPage() {
       count: posts.filter((p) => p.status === "scheduled" || p.status === "posting").length
     },
     { id: "live", label: "Live", count: posts.filter((p) => p.status === "live").length },
-    { id: "manual_review", label: "Manual Review", count: posts.filter((p) => p.needsManualReview).length }
+    { id: "manual_review", label: "Needs Review", count: posts.filter((p) => p.status === "manual_review" || p.needsManualReview).length }
   ];
 
   const filteredPosts = posts.filter((post) => {
@@ -120,7 +122,7 @@ export function PostsPage() {
     if (activeTab === "new") return post.status === "new";
     if (activeTab === "scheduled") return post.status === "scheduled" || post.status === "posting";
     if (activeTab === "live") return post.status === "live" || post.status === "error";
-    if (activeTab === "manual_review") return post.needsManualReview;
+    if (activeTab === "manual_review") return post.status === "manual_review" || post.needsManualReview;
     return true;
   });
 
@@ -156,7 +158,31 @@ export function PostsPage() {
 
   function refresh() {
     queryClient.invalidateQueries({ queryKey: ["posts", activeBusinessId] });
+    queryClient.invalidateQueries({ queryKey: ["media", activeBusinessId] });
   }
+
+  const runSchedulerMutation = useMutation({
+    mutationFn: async () => {
+      const res = await api.post("/scheduler/run-now");
+      return res.data.data as { postsTriggered: number; automationsTriggered: number };
+    },
+    onSuccess: (result) => {
+      const total = result.postsTriggered;
+      if (total === 0) {
+        toast({ tone: "success", title: "No posts due", description: "No scheduled posts were ready to publish right now." });
+      } else {
+        toast({
+          tone: "success",
+          title: `Triggered ${total} post${total !== 1 ? "s" : ""}`,
+          description: `${result.postsTriggered} draft${result.postsTriggered !== 1 ? "s" : ""} sent to Instagram.`,
+        });
+      }
+      setTimeout(refresh, 2000);
+    },
+    onError: (err) => {
+      toast({ tone: "error", title: "Scheduler failed", description: extractApiError(err, "Could not run scheduler.") });
+    },
+  });
 
   function toggleSelect(id: string) {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -206,7 +232,7 @@ export function PostsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <ConfirmDialog
         open={confirmBulkRemove}
         title={`Delete ${selectedIds.length} post${selectedIds.length !== 1 ? "s" : ""}?`}
@@ -241,6 +267,28 @@ export function PostsPage() {
                 <ListIcon />
               </ViewModeButton>
             </div>
+
+            <button
+              onClick={() => runSchedulerMutation.mutate()}
+              disabled={runSchedulerMutation.isPending}
+              className="btn-secondary disabled:opacity-60"
+              title="Manually trigger the scheduler — publishes all posts whose scheduled time has passed"
+            >
+              {runSchedulerMutation.isPending ? (
+                <>
+                  <svg className="size-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                  </svg>
+                  Running…
+                </>
+              ) : (
+                <>
+                  <Icons.Refresh size={14} />
+                  Publish Due
+                </>
+              )}
+            </button>
 
             <button onClick={() => setShowCreate(true)} className="btn-primary">
               <Icons.Plus size={14} />
@@ -327,10 +375,11 @@ export function PostsPage() {
       {/* Banner for Manual Review */}
       {activeTab === "manual_review" && filteredPosts.length > 0 && (
         <div
-          className="rounded-[14px] px-4 py-3 text-sm font-semibold"
+          className="rounded-[14px] px-4 py-3 text-sm"
           style={{ background: "var(--err-soft)", border: "1px solid var(--err)", color: "var(--err)" }}
         >
-          These posts failed to publish 2 times. Review and retry manually.
+          <span className="font-semibold">These posts failed to publish twice.</span>
+          {" "}Fix the issue shown on each post, then hit Retry.
         </div>
       )}
 
@@ -600,7 +649,7 @@ function PostCard({
     <div className="flex flex-col gap-2">
       {/* Thumbnail */}
       <div
-        className={`group relative overflow-hidden rounded-[14px] ${STATUS_RING[post.status] ?? ""} aspect-square`}
+        className={`relative overflow-hidden rounded-[14px] ${STATUS_RING[post.status] ?? ""} aspect-square`}
         style={{ outlineColor: STATUS_RING_COLOR[post.status] ?? "transparent", cursor: "pointer" }}
         onClick={onOpenDetail}
         role="button"
@@ -655,9 +704,10 @@ function PostCard({
           </div>
         )}
 
-        {/* Hover overlay */}
+        {/* Always-visible action strip at bottom of thumbnail */}
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/55 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+          className="absolute bottom-0 left-0 right-0 z-20 flex items-center justify-center gap-1.5 px-2 py-2"
+          style={{ background: "linear-gradient(to top, rgba(0,0,0,0.65) 0%, transparent 100%)" }}
           onClick={(e) => e.stopPropagation()}
         >
           {isLive ? (
@@ -666,50 +716,41 @@ function PostCard({
                 href={post.permalink}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow hover:bg-white"
+                className="rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-800 shadow"
               >
-                View on Instagram →
+                View →
               </a>
-            ) : (
-              <span className="text-xs font-semibold text-white/80">Live</span>
-            )
+            ) : null
+          ) : post.needsManualReview ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); runAction("publish"); }}
+              disabled={!!loading || isPosting}
+              className="rounded-full bg-red-500/90 px-2.5 py-1 text-[10px] font-semibold text-white shadow disabled:opacity-60"
+            >
+              {loading === "publish" || isPosting ? "…" : "Retry"}
+            </button>
           ) : (
             <>
-              {post.needsManualReview ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    runAction("publish");
-                  }}
-                  disabled={!!loading || isPosting}
-                  className="rounded-full bg-red-600/95 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-red-600 disabled:opacity-60"
-                >
-                  {loading === "publish" || isPosting ? "Publishing…" : "Retry"}
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={() => runAction("hashtags")}
-                    disabled={!!loading}
-                    className="rounded-full bg-white/95 px-3 py-1.5 text-xs font-semibold text-slate-800 shadow hover:bg-white disabled:opacity-60"
-                  >
-                    {loading === "hashtags" ? "Generating…" : "# Hashtags"}
-                  </button>
-                  <button
-                    onClick={() => runAction("publish")}
-                    disabled={!!loading || isPosting}
-                    className="rounded-full px-3 py-1.5 text-xs font-semibold text-white shadow disabled:opacity-60"
-                    style={{ background: "var(--ink)" }}
-                  >
-                    {loading === "publish" || isPosting ? "Publishing…" : "Publish now"}
-                  </button>
-                </>
-              )}
               <button
-                onClick={onOpenDetail}
-                className="rounded-full bg-white/20 px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-white/30"
+                onClick={(e) => { e.stopPropagation(); runAction("hashtags"); }}
+                disabled={!!loading}
+                className="rounded-full bg-white/20 px-2 py-1 text-[10px] font-semibold text-white shadow disabled:opacity-60"
+                title="Generate hashtags"
               >
-                Edit / Details
+                {loading === "hashtags" ? "…" : "#"}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); runAction("publish"); }}
+                disabled={!!loading || isPosting}
+                className="rounded-full bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-800 shadow disabled:opacity-60"
+              >
+                {loading === "publish" || isPosting ? "…" : "Publish"}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); onOpenDetail(); }}
+                className="rounded-full bg-white/20 px-2 py-1 text-[10px] font-semibold text-white shadow"
+              >
+                Edit
               </button>
             </>
           )}
@@ -799,9 +840,11 @@ function ListCard({
   const isLive = post.status === "live";
   const isPosting = post.status === "posting";
   const [loading, setLoading] = useState("");
+  const [rowError, setRowError] = useState("");
   const [showStatus, setShowStatus] = useState(false);
   const statusRef = useRef<HTMLDivElement>(null);
   const badgeStyle = STATUS_BADGE_STYLE[post.status] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
+  const toast = useToast();
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -818,23 +861,55 @@ function ListCard({
     try {
       await api.patch(`/posts/${post._id}`, { businessId, status: newStatus });
       onRefresh();
-    } catch {
-      // noop
+    } catch (err) {
+      toast({ tone: "error", title: "Status update failed", description: extractApiError(err, "Could not update status.") });
     }
   }
 
   async function publishNow(e: React.MouseEvent) {
     e.stopPropagation();
+    setRowError("");
     setLoading("publish");
     try {
       await api.post(`/posts/${post._id}/publish`, { businessId });
       onRefresh();
-    } catch {
-      // noop
+    } catch (err) {
+      setRowError(extractApiError(err, "Publish failed."));
     } finally {
       setLoading("");
     }
   }
+
+  async function retryCaption(e: React.MouseEvent) {
+    e.stopPropagation();
+    setRowError("");
+    setLoading("caption");
+    try {
+      const assetIds = post.mediaAssetIds?.map((m) => (typeof m === "string" ? m : m._id)) ?? [];
+      await Promise.all(assetIds.map((id) => api.post(`/media/${id}/generate-caption`, { businessId })));
+      onRefresh();
+    } catch (err) {
+      setRowError(extractApiError(err, "Caption retry failed."));
+    } finally {
+      setLoading("");
+    }
+  }
+
+  async function approveSchedule(e: React.MouseEvent) {
+    e.stopPropagation();
+    setRowError("");
+    setLoading("approve");
+    try {
+      await api.post(`/posts/${post._id}/approve-schedule`, { businessId });
+      onRefresh();
+    } catch (err) {
+      setRowError(extractApiError(err, "Approve failed."));
+    } finally {
+      setLoading("");
+    }
+  }
+
+  const isManualReview = post.status === "manual_review" || post.needsManualReview;
 
   return (
     <div
@@ -842,7 +917,7 @@ function ListCard({
       className="group flex cursor-pointer items-center gap-3 rounded-[14px] px-3 py-3 transition"
       style={{
         background: selected ? "var(--err-soft)" : "var(--surface)",
-        border: `1px solid ${selected ? "var(--err)" : "var(--line)"}`,
+        border: `1px solid ${selected ? "var(--err)" : isManualReview ? "#e65100" : "var(--line)"}`,
       }}
       onMouseEnter={(e) => {
         if (!selected) e.currentTarget.style.borderColor = "var(--line-2)";
@@ -973,6 +1048,12 @@ function ListCard({
           <p className="truncate text-xs" style={{ color: "var(--muted)" }}>{post.caption}</p>
         )}
 
+        {(post.lastError || rowError) && (
+          <p className="truncate text-[10px] font-medium" style={{ color: "var(--err)" }}>
+            {rowError || post.lastError}
+          </p>
+        )}
+
         <div className="mt-1 flex flex-wrap items-center gap-1">
           {post.hashtags?.slice(0, 3).map((tag) => (
             <span
@@ -998,7 +1079,7 @@ function ListCard({
 
       {/* Actions */}
       <div
-        className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100"
+        className="flex shrink-0 items-center gap-2"
         onClick={(e) => e.stopPropagation()}
       >
         {isLive && post.permalink ? (
@@ -1011,26 +1092,34 @@ function ListCard({
           >
             View
           </a>
+        ) : isManualReview ? (
+          <>
+            <button
+              onClick={retryCaption}
+              disabled={!!loading}
+              className="rounded-full px-2.5 py-1 text-xs font-semibold disabled:opacity-60"
+              style={{ background: "#fff3e0", border: "1px solid #e65100", color: "#e65100" }}
+            >
+              {loading === "caption" ? "…" : "Retry Caption"}
+            </button>
+            <button
+              onClick={approveSchedule}
+              disabled={!!loading}
+              className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
+              style={{ background: "#e65100" }}
+            >
+              {loading === "approve" ? "…" : "Approve"}
+            </button>
+          </>
         ) : !isLive ? (
-          post.needsManualReview ? (
-            <button
-              onClick={publishNow}
-              disabled={!!loading || isPosting}
-              className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
-              style={{ background: "var(--err)" }}
-            >
-              {loading === "publish" || isPosting ? "…" : "Retry"}
-            </button>
-          ) : (
-            <button
-              onClick={publishNow}
-              disabled={!!loading || isPosting}
-              className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
-              style={{ background: "var(--ink)" }}
-            >
-              {loading === "publish" || isPosting ? "…" : "Publish"}
-            </button>
-          )
+          <button
+            onClick={publishNow}
+            disabled={!!loading || isPosting}
+            className="rounded-full px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
+            style={{ background: "var(--ink)" }}
+          >
+            {loading === "publish" || isPosting ? "…" : "Publish"}
+          </button>
         ) : null}
         <button
           onClick={onOpenDetail}
@@ -1087,6 +1176,21 @@ function PostDetailModal({
   const queryClient = useQueryClient();
   const previewUrl = findPreviewUrl(post, allMedia);
   const isVideo = post.mediaAssetIds?.[0]?.mediaType === "video";
+
+  const [carouselIndex, setCarouselIndex] = useState(0);
+
+  const allMediaUrls: { url: string; isVideo: boolean }[] = (post.mediaAssetIds ?? []).map((m) => {
+    const full = allMedia.find((a) => a._id === m._id);
+    const url = full
+      ? getMediaPreviewUrl(full)
+      : m.previewUrl
+        ? resolveApiAssetUrl(m.previewUrl)
+        : m.driveThumbnailLink ?? (m.publicUrl?.startsWith("http") ? m.publicUrl : m.publicUrl ? resolveApiAssetUrl(m.publicUrl) : "");
+    return { url, isVideo: m.mediaType === "video" };
+  });
+
+  const carouselCount = allMediaUrls.length;
+  const activeMedia = allMediaUrls[carouselIndex] ?? { url: previewUrl, isVideo };
 
   const [title, setTitle] = useState(post.title ?? "");
   const [caption, setCaption] = useState(post.caption ?? "");
@@ -1154,15 +1258,26 @@ function PostDetailModal({
     onError: (err) => setActionError(extractApiError(err, "Delete failed."))
   });
 
-  const suggestHashtagsMutation = useMutation({
+  const generateCaptionMutation = useMutation({
     mutationFn: async () => {
-      const res = await api.post(`/posts/${post._id}/suggest-hashtags`, { businessId });
-      return res.data.data.hashtags as string[];
+      const assetIds = (post.mediaAssetIds ?? []).map((m) => (typeof m === "string" ? m : m._id));
+      if (assetIds.length > 1) {
+        const res = await api.post("/media/generate-carousel-caption", { businessId, mediaIds: assetIds });
+        return { caption: (res.data?.data?.caption ?? "") as string, hashtags: (res.data?.data?.hashtags ?? []) as string[] };
+      }
+      const id = assetIds[0];
+      if (!id) throw new Error("No media asset attached to this post");
+      const res = await api.post(`/media/${id}/generate-caption`, { businessId });
+      return {
+        caption: (res.data?.data?.caption ?? res.data?.data?.asset?.aiCaption ?? "") as string,
+        hashtags: (res.data?.data?.hashtags ?? []) as string[]
+      };
     },
-    onSuccess: (tags) => {
-      setHashtagInput(tags.join(" "));
+    onSuccess: ({ caption: newCaption, hashtags }) => {
+      if (newCaption) setCaption(newCaption);
+      if (hashtags.length) setHashtagInput(hashtags.join(" "));
     },
-    onError: (err) => setActionError(extractApiError(err, "Hashtag generation failed."))
+    onError: (err) => setActionError(extractApiError(err, "Caption generation failed."))
   });
 
   const isLive = post.status === "live";
@@ -1171,7 +1286,7 @@ function PostDetailModal({
     updateMutation.isPending ||
     publishMutation.isPending ||
     deleteMutation.isPending ||
-    suggestHashtagsMutation.isPending;
+    generateCaptionMutation.isPending;
 
   const badgeStyle = STATUS_BADGE_STYLE[post.status] ?? { bg: "var(--bg-2)", color: "var(--ink-2)" };
 
@@ -1219,11 +1334,12 @@ function PostDetailModal({
             className="hidden w-56 shrink-0 sm:flex sm:flex-col"
             style={{ borderRight: "1px solid var(--line)", background: "var(--bg)" }}
           >
-            <div className="flex flex-1 items-center justify-center p-4">
-              {previewUrl ? (
-                isVideo ? (
+            <div className="relative flex flex-1 items-center justify-center p-4">
+              {activeMedia.url ? (
+                activeMedia.isVideo ? (
                   <video
-                    src={previewUrl}
+                    key={activeMedia.url}
+                    src={activeMedia.url}
                     className="w-full rounded-[14px] object-cover shadow-md"
                     style={{ maxHeight: 240 }}
                     controls
@@ -1232,7 +1348,8 @@ function PostDetailModal({
                   />
                 ) : (
                   <img
-                    src={previewUrl}
+                    key={activeMedia.url}
+                    src={activeMedia.url}
                     alt={post.title}
                     className="w-full rounded-[14px] object-cover shadow-md"
                     style={{ maxHeight: 240 }}
@@ -1249,12 +1366,41 @@ function PostDetailModal({
                   <Icons.Image size={40} style={{ color: "var(--line-2)" } as React.CSSProperties} />
                 </div>
               )}
+
+              {carouselCount > 1 && (
+                <>
+                  <button
+                    onClick={() => setCarouselIndex((i) => (i - 1 + carouselCount) % carouselCount)}
+                    className="absolute left-5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full shadow-md transition"
+                    style={{ background: "var(--bg)", border: "1px solid var(--line)", color: "var(--fg)" }}
+                  >
+                    <Icons.ChevronLeft size={13} />
+                  </button>
+                  <button
+                    onClick={() => setCarouselIndex((i) => (i + 1) % carouselCount)}
+                    className="absolute right-5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-full shadow-md transition"
+                    style={{ background: "var(--bg)", border: "1px solid var(--line)", color: "var(--fg)" }}
+                  >
+                    <Icons.ChevronRight size={13} />
+                  </button>
+                </>
+              )}
             </div>
 
-            {(post.mediaAssetIds?.length ?? 0) > 1 && (
-              <p className="pb-3 text-center text-xs" style={{ color: "var(--muted)" }}>
-                {post.mediaAssetIds!.length} media files
-              </p>
+            {carouselCount > 1 && (
+              <div className="flex items-center justify-center gap-1.5 pb-3">
+                {allMediaUrls.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setCarouselIndex(i)}
+                    className="h-1.5 rounded-full transition-all"
+                    style={{
+                      width: i === carouselIndex ? 16 : 6,
+                      background: i === carouselIndex ? "var(--accent)" : "var(--line-2)"
+                    }}
+                  />
+                ))}
+              </div>
             )}
 
             {isLive && post.permalink && (
@@ -1287,7 +1433,28 @@ function PostDetailModal({
 
               {/* Caption */}
               <div>
-                <label className="section-eyebrow mb-1.5 block">Caption</label>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="section-eyebrow">Caption</label>
+                  {!isLive && (
+                    <button
+                      onClick={() => generateCaptionMutation.mutate()}
+                      disabled={anyLoading || !post.mediaAssetIds?.length}
+                      className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50"
+                      style={{
+                        background: "var(--accent-soft)",
+                        border: "1px solid var(--accent)",
+                        color: "var(--accent)"
+                      }}
+                    >
+                      {generateCaptionMutation.isPending ? (
+                        <span className="inline-block size-3 animate-spin rounded-full border border-current border-t-transparent" />
+                      ) : (
+                        <Icons.Sparkles size={11} />
+                      )}
+                      {generateCaptionMutation.isPending ? "Generating…" : "Generate Caption & Hashtags"}
+                    </button>
+                  )}
+                </div>
                 <textarea
                   rows={4}
                   value={caption}
@@ -1301,25 +1468,6 @@ function PostDetailModal({
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
                   <label className="section-eyebrow">Hashtags</label>
-                  {!isLive && (
-                    <button
-                      onClick={() => suggestHashtagsMutation.mutate()}
-                      disabled={anyLoading}
-                      className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50"
-                      style={{
-                        background: "var(--accent-soft)",
-                        border: "1px solid var(--accent)",
-                        color: "var(--accent)"
-                      }}
-                    >
-                      {suggestHashtagsMutation.isPending ? (
-                        <span className="inline-block size-3 animate-spin rounded-full border border-current border-t-transparent" />
-                      ) : (
-                        <Icons.Sparkles size={11} />
-                      )}
-                      {suggestHashtagsMutation.isPending ? "Generating…" : "AI Suggest"}
-                    </button>
-                  )}
                 </div>
                 <textarea
                   rows={2}
@@ -1399,7 +1547,23 @@ function PostDetailModal({
                     <span className="font-mono" style={{ color: "var(--ink-2)" }}>{post.igMediaId}</span>
                   </div>
                 )}
+                {post.retryCount ? (
+                  <div className="flex justify-between">
+                    <span>Retry attempts</span>
+                    <span className="font-medium" style={{ color: "var(--warn)" }}>{post.retryCount}/2</span>
+                  </div>
+                ) : null}
               </div>
+
+              {post.lastError && (
+                <div
+                  className="rounded-[14px] px-4 py-3 text-xs space-y-1"
+                  style={{ background: "var(--err-soft)", border: "1px solid var(--err)" }}
+                >
+                  <p className="font-semibold" style={{ color: "var(--err)" }}>Last publish error</p>
+                  <p style={{ color: "var(--err)", opacity: 0.85 }}>{post.lastError}</p>
+                </div>
+              )}
 
               {actionError && (
                 <div
