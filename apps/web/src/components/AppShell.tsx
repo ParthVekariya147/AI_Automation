@@ -13,6 +13,7 @@ const navGroups: NavGroup[] = [
     label: "Workspace",
     items: [
       { to: "/", label: "Overview", icon: <Icons.Home size={15} />, end: true },
+      { to: "/studio", label: "Studio", icon: <Icons.Layers size={15} /> },
       { to: "/posts", label: "Posts", icon: <Icons.Image size={15} /> },
     ],
   },

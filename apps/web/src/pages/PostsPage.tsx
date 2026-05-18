@@ -1192,10 +1192,20 @@ function PostDetailModal({
   const carouselCount = allMediaUrls.length;
   const activeMedia = allMediaUrls[carouselIndex] ?? { url: previewUrl, isVideo };
 
+  const storedDefaultCollaborator = useAuthStore((s) => s.defaultCollaborator);
+  const setDefaultCollaborator = useAuthStore((s) => s.setDefaultCollaborator);
+
   const [title, setTitle] = useState(post.title ?? "");
   const [caption, setCaption] = useState(post.caption ?? "");
   const [hashtagInput, setHashtagInput] = useState(post.hashtags?.join(" ") ?? "");
-  const [collaborators, setCollaborators] = useState(post.collaborators?.join(", ") ?? "");
+  const existingCollabStr = post.collaborators?.join(", ") ?? "";
+  const [collaborators, setCollaborators] = useState(
+    existingCollabStr ||
+    (storedDefaultCollaborator ? `@${storedDefaultCollaborator}` : "")
+  );
+  const [useDefaultCollab, setUseDefaultCollab] = useState(
+    !existingCollabStr && Boolean(storedDefaultCollaborator)
+  );
   const [scheduledFor, setScheduledFor] = useState(
     post.scheduledFor ? new Date(post.scheduledFor).toISOString().slice(0, 16) : ""
   );
@@ -1206,7 +1216,9 @@ function PostDetailModal({
     setTitle(post.title ?? "");
     setCaption(post.caption ?? "");
     setHashtagInput(post.hashtags?.join(" ") ?? "");
-    setCollaborators(post.collaborators?.join(", ") ?? "");
+    const freshCollab = post.collaborators?.join(", ") ?? "";
+    setCollaborators(freshCollab || (storedDefaultCollaborator ? `@${storedDefaultCollaborator}` : ""));
+    setUseDefaultCollab(!freshCollab && Boolean(storedDefaultCollaborator));
     setScheduledFor(post.scheduledFor ? new Date(post.scheduledFor).toISOString().slice(0, 16) : "");
     setActionError("");
     setConfirmDelete(false);
@@ -1498,14 +1510,49 @@ function PostDetailModal({
 
               {/* Collaborators */}
               <div>
-                <label className="section-eyebrow mb-1.5 block">Collaborators</label>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label className="section-eyebrow">Collaborators</label>
+                  {storedDefaultCollaborator && !isLive && (
+                    <label className="flex cursor-pointer items-center gap-1.5 text-[10px]" style={{ color: "var(--muted)" }}>
+                      <input
+                        type="checkbox"
+                        checked={useDefaultCollab}
+                        onChange={(e) => {
+                          setUseDefaultCollab(e.target.checked);
+                          setCollaborators(e.target.checked ? `@${storedDefaultCollaborator}` : "");
+                        }}
+                        className="h-3 w-3 rounded accent-[var(--brand)]"
+                      />
+                      Use @{storedDefaultCollaborator}
+                    </label>
+                  )}
+                </div>
                 <input
                   value={collaborators}
-                  onChange={(e) => setCollaborators(e.target.value)}
+                  onChange={(e) => {
+                    setCollaborators(e.target.value);
+                    if (useDefaultCollab) setUseDefaultCollab(false);
+                  }}
                   disabled={isLive}
                   placeholder="@username1, @username2"
                   className="input w-full"
                 />
+                {!isLive && collaborators.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const handle = collaborators.trim().split(",")[0].trim().replace(/^@/, "");
+                      if (handle) {
+                        setDefaultCollaborator(handle);
+                        setUseDefaultCollab(true);
+                      }
+                    }}
+                    className="mt-1 text-[10px] font-medium underline-offset-2 hover:underline"
+                    style={{ color: "var(--brand)" }}
+                  >
+                    Save as default
+                  </button>
+                )}
               </div>
 
               {/* Schedule */}
@@ -1667,6 +1714,9 @@ function CreateDrawer({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const storedDefaultCollaborator = useAuthStore((s) => s.defaultCollaborator);
+  const setDefaultCollaborator = useAuthStore((s) => s.setDefaultCollaborator);
+
   const [postType, setPostType] = useState<"single" | "carousel" | "video" | "reel">(
     prefill.postType ?? "single"
   );
@@ -1675,7 +1725,10 @@ function CreateDrawer({
   const [caption, setCaption] = useState(prefill.aiCaption ?? "");
   const [title, setTitle] = useState("");
   const [scheduledFor, setScheduledFor] = useState("");
-  const [collaborators, setCollaborators] = useState("");
+  const [useDefaultCollab, setUseDefaultCollab] = useState(Boolean(storedDefaultCollaborator));
+  const [collaborators, setCollaborators] = useState(
+    storedDefaultCollaborator ? `@${storedDefaultCollaborator}` : ""
+  );
   const [generatingCaption, setGeneratingCaption] = useState(false);
   const [error, setError] = useState("");
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -1976,16 +2029,53 @@ function CreateDrawer({
 
             {/* Collaborators */}
             <section>
-              <p className="section-eyebrow mb-2">Collaborators (optional)</p>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="section-eyebrow">Collaborators (optional)</p>
+                {storedDefaultCollaborator && (
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[10px]" style={{ color: "var(--muted)" }}>
+                    <input
+                      type="checkbox"
+                      checked={useDefaultCollab}
+                      onChange={(e) => {
+                        setUseDefaultCollab(e.target.checked);
+                        setCollaborators(e.target.checked ? `@${storedDefaultCollaborator}` : "");
+                      }}
+                      className="h-3 w-3 rounded accent-[var(--brand)]"
+                    />
+                    Use @{storedDefaultCollaborator}
+                  </label>
+                )}
+              </div>
               <input
                 value={collaborators}
-                onChange={(e) => setCollaborators(e.target.value)}
+                onChange={(e) => {
+                  setCollaborators(e.target.value);
+                  if (useDefaultCollab) setUseDefaultCollab(false);
+                }}
                 placeholder="@username1, @username2"
                 className="input w-full"
               />
-              <p className="mt-1.5 text-[10px]" style={{ color: "var(--muted)" }}>
-                After publishing, each collaborator gets an invite in Instagram.
-              </p>
+              <div className="mt-1.5 flex items-center justify-between">
+                <p className="text-[10px]" style={{ color: "var(--muted)" }}>
+                  After publishing, each collaborator gets an invite in Instagram.
+                </p>
+                {collaborators.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const handle = collaborators.trim().split(",")[0].trim().replace(/^@/, "");
+                      if (handle) {
+                        setDefaultCollaborator(handle);
+                        setUseDefaultCollab(true);
+                      }
+                    }}
+                    className="ml-2 shrink-0 text-[10px] font-medium underline-offset-2 hover:underline"
+                    style={{ color: "var(--brand)" }}
+                  >
+                    Save as default
+                  </button>
+                )}
+              </div>
             </section>
           </div>
         </div>

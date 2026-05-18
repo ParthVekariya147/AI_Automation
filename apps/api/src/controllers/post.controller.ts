@@ -130,12 +130,11 @@ export const schedulePost = asyncHandler(async (req: AuthedRequest, res: Respons
   draft.smartTimingSuggestedFor = smartTiming.suggestedFor;
   await draft.save();
 
-  const job = await PublishJobModel.create({
-    businessId: draft.businessId,
-    postDraftId: draft._id,
-    status: "queued",
-    attempts: 0
-  });
+  const job = await PublishJobModel.findOneAndUpdate(
+    { postDraftId: draft._id },
+    { businessId: draft.businessId, postDraftId: draft._id, status: "queued", attempts: 0 },
+    { upsert: true, new: true }
+  );
 
   res.json({
     success: true,

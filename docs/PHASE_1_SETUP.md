@@ -1,186 +1,198 @@
 # Phase 1 Setup Guide
 
-## Current Phase Status
+> Updated: 2026-05-12
 
-This phase already includes:
+## What's Already Built
 
-- monorepo structure
-- Express API
-- MongoDB models
-- JWT auth
-- role-based access for `super_admin`, `admin`, and `user`
-- business tenancy
-- media records
-- post draft records
-- smart timing suggestion stub
-- likes analytics records
-- Google Drive connection records
-- Instagram account records
+- Monorepo structure (Express API + React Web)
+- MongoDB models: User, Business, Membership, MediaAsset, PostDraft, InstagramAccount, GoogleDriveConnection, PublishJob, AuditLog, AnalyticsLike, **FolderAutomation, AutomationRun**
+- JWT auth + role-based access (`super_admin`, `admin`, `user`)
+- Google Drive OAuth + file browsing + thumbnail cache
+- Instagram OAuth + full publish flow (single, carousel, video, reel)
+- Background scheduler (60-second tick)
+- Gemini AI caption generation (multi-key support for parallel automation runs)
+- Image aspect-ratio fitting via Sharp (blur-padded background)
+- **Folder Automations** — watch Drive folder → AI captions → group files → auto-schedule posts
+- Content Queue, Queue Detail, Drive Browser, Posts, Integrations, Businesses, Analytics pages
+- Automations page with wizard UI, run history, pause/resume, Fetch Now
 
-## Pending Tasks In This Phase
+## Pending Before Production-Ready
 
-These items are still pending before the platform is fully production-ready:
+1. Refresh tokens + session invalidation
+2. Invite flow + reset-password flow
+3. Token encryption at rest
+4. Real Instagram analytics auto-fetch (like/reach via Graph API)
+5. Audit log viewer screen
+6. Business switcher in AppShell UI (store method exists, no UI)
+7. Role-aware UI restrictions for `user` role (backend is correct; frontend needs tightening)
+8. Production deployment config (permanent Cloudflare tunnel or cloud host)
+9. Publish-cache and thumbnail-cache cleanup job
 
-1. Real Google Drive OAuth flow
-2. Real Google Drive file listing and import sync
-3. Real Instagram Graph API OAuth flow
-4. Real Instagram publish flow for image/video
-5. Background scheduler worker for scheduled posts
-6. Gemini integration for hashtag suggestions
-7. secure token encryption at rest
-8. invite/reset-password flow
-9. refresh tokens and logout/session invalidation
-10. role-aware UI restrictions in every screen
-11. production deployment config
-12. audit log screens and admin support tools
+---
 
 ## Login Flow
 
-### 1. Super Admin
+### 1. Create Super Admin
 
-The first platform user is created from:
+Open: `http://localhost:5173/setup`
 
-- `http://localhost:5173/setup`
-
-This creates the first `super_admin`.
+Fill in name, email, password. This creates the first `super_admin`. Route is disabled after first use.
 
 ### 2. Create First Business
 
-After `super_admin` logs in, create the first business from:
+After logging in as `super_admin`:
 
-- `Businesses` page
+- Open `Businesses` page
+- Create a new business (name, slug, timezone)
 
-Without a business, there is no tenant to attach members, Instagram accounts, Drive connections, media, or posts.
+Without a business there is no workspace to attach anything else.
 
-### 3. Create Business Admin
+### 3. Create Admin User
 
-On the `Businesses` page:
+On `Businesses` page:
 
-- choose the business
-- add a member
-- choose role `admin`
-- set the password in the member creation form
+- Select the business
+- Add a member → role `admin` → set a password
 
-That user can then log in from:
+This admin manages Drive, Instagram, media queue, and publishing for that business.
 
-- `http://localhost:5173/login`
+### 4. Create Normal User (Optional)
 
-### 4. Create Normal User
+Same page, role `user`. Currently has limited access based on backend route guards. Frontend RBAC tightening is pending.
 
-On the same `Businesses` page:
+All roles use the same `/login` page.
 
-- add a member
-- choose role `user`
-- set the password in the member creation form
+---
 
-That user also logs in from:
+## Password Rules
 
-- `http://localhost:5173/login`
+- Setup page: minimum 6 characters
+- Members: password set explicitly in the member creation form on the Businesses page
+- Updating a member with a new password immediately replaces the login password
 
-## Current Password Rules
+---
 
-- setup password: minimum `6` characters
-- added members now should be created with an explicit password from the `Businesses` page
-- when an existing member is updated and a password is entered again, that password becomes the new login password
+## Role Capabilities
 
-## Which Login Is Used For What
+| Role | Can Do |
+|---|---|
+| `super_admin` | Create businesses, view all businesses, manage tenant structure |
+| `admin` | Manage business members, connect Drive, connect Instagram, upload/import media, schedule/publish posts, manage automations |
+| `user` | Read-only access to business-scoped data where backend allows |
 
-- `super_admin`
-  - create businesses
-  - view all businesses
-  - manage tenant structure
-- `admin`
-  - manage business members
-  - connect Drive
-  - connect Instagram
-  - upload media
-  - create drafts
-  - schedule/publish posts
-- `user`
-  - currently can log in and access business-scoped read flows where allowed by backend routes
-  - should be tightened further in a later RBAC UI pass
+---
 
-## Google Drive Env Storage
+## Environment Variables
 
-Store Google Drive secrets only in:
+### Backend (`apps/api/.env`)
 
-- `apps/api/.env`
+```bash
+# Required
+MONGODB_URI=mongodb://localhost:27017/ai-automation
+JWT_SECRET=your-long-random-secret
+GEMINI_API_KEY=your-gemini-key
+FACEBOOK_APP_ID=your-meta-app-id
+FACEBOOK_APP_SECRET=your-meta-app-secret
+FACEBOOK_REDIRECT_URI=http://localhost:4000/api/instagram/oauth/callback
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:4000/api/google-drive/oauth/callback
+PUBLIC_API_URL=https://your-tunnel.trycloudflare.com
 
-Do not store Google secrets in:
+# Optional
+GEMINI_API_KEY_2=second-gemini-key
+GEMINI_API_KEY_3=third-gemini-key
+FACEBOOK_GRAPH_API_VERSION=v25.0
+FACEBOOK_SCOPES=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement
+GOOGLE_DRIVE_SCOPES=https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly
+PORT=4000
+UPLOAD_DIR=uploads/
+```
 
-- `apps/web/.env`
+**Multiple Gemini keys:** Configure `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` etc. for parallel caption generation in automation runs. The system rotates keys round-robin and skips rate-limited keys automatically.
 
-Current backend env keys prepared for Drive:
+### Frontend (`apps/web/.env`)
 
-- `GOOGLE_CLIENT_ID`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REDIRECT_URI`
-- `GOOGLE_DRIVE_SCOPES`
+```bash
+VITE_API_URL=http://localhost:4000/api
+```
 
-## Instagram OAuth Env Storage
+If blank, frontend auto-targets current host port `4000`.
 
-Store Meta/Instagram secrets only in:
+---
 
-- `apps/api/.env`
+## Instagram OAuth (Meta App Setup)
 
-Do not store Meta secrets in:
+1. Go to **Meta for Developers** → create a new **Business** app.
+2. Add products: **Facebook Login for Business** + **Instagram Graph API**.
+3. **App Settings → Basic** → copy `App ID` (→ `FACEBOOK_APP_ID`) and `App Secret` (→ `FACEBOOK_APP_SECRET`).
+   - Do **not** paste a user access token in `FACEBOOK_APP_SECRET`. Use the app secret from the dashboard.
+4. **Facebook Login settings** → add authorized redirect URI exactly:
+   `http://localhost:4000/api/instagram/oauth/callback`
+5. Add yourself as a **developer/tester** in App Roles.
+6. Ensure a Facebook Page is linked to an **Instagram Professional** account (Business or Creator).
+7. Restart the API after editing env values.
 
-- `apps/web/.env`
+---
 
-Current backend env keys prepared for Instagram OAuth:
+## Google Drive OAuth (Google Cloud Console)
 
-- `FACEBOOK_APP_ID`
-- `FACEBOOK_APP_SECRET`
-- `FACEBOOK_REDIRECT_URI`
-- `FACEBOOK_GRAPH_API_VERSION`
-- `FACEBOOK_SCOPES`
+1. Go to **Google Cloud Console** → create or select a project.
+2. Enable the **Google Drive API**.
+3. **APIs & Services → Credentials** → create an **OAuth 2.0 Client ID** (Web application type).
+4. Add authorized redirect URI: `http://localhost:4000/api/google-drive/oauth/callback`
+5. Copy `Client ID` (→ `GOOGLE_CLIENT_ID`) and `Client Secret` (→ `GOOGLE_CLIENT_SECRET`).
+6. Recommended scopes (narrower than full Drive access):
+   - `https://www.googleapis.com/auth/drive.file`
+   - `https://www.googleapis.com/auth/drive.metadata.readonly`
 
-Recommended local values:
+---
 
-- `FACEBOOK_REDIRECT_URI=http://localhost:4000/api/instagram/oauth/callback`
-- `FACEBOOK_GRAPH_API_VERSION=v25.0`
-- `FACEBOOK_SCOPES=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement`
+## Tunnel Setup (Required for Instagram Publishing)
 
-## Meta App / API Credential Generation Steps
+Instagram fetches media from a **public URL**. Localhost is not reachable from Meta servers.
 
-1. Open Meta for Developers and create a new app (Business app type).
-2. Add products:
-  - Facebook Login for Business
-  - Instagram Graph API
-3. Go to App Settings -> Basic and copy:
-  - App ID -> `FACEBOOK_APP_ID`
-  - App Secret -> `FACEBOOK_APP_SECRET`
-  - do not use a generated user access token here
-4. In Facebook Login settings, add Authorized Redirect URI exactly as:
-  - `http://localhost:4000/api/instagram/oauth/callback`
-5. Add your Facebook user as a developer/tester in app roles.
-6. Ensure a Facebook Page is linked to an Instagram Professional account (Business/Creator).
-7. Restart API after editing env values.
+**Always start with:**
+```bash
+./start.sh
+```
 
-## Frontend API Base URL (Env)
+This script:
+1. Starts a Cloudflare Quick Tunnel → `localhost:4000`
+2. Reads the generated `*.trycloudflare.com` URL
+3. Writes it to `apps/api/.env` as `PUBLIC_API_URL`
+4. Starts API + Web
 
-In `apps/web/.env`:
+Each restart gets a new URL — the script updates `.env` automatically.
 
-- `VITE_API_URL=http://localhost:4000/api`
+**For production:** Use a permanent named Cloudflare tunnel or deploy to a public HTTPS host.
 
-If this is blank, frontend uses current host with port `4000` and `/api` path.
+---
 
-## Recommended Google Drive Scopes
+## Full Local Startup Sequence
 
-- `https://www.googleapis.com/auth/drive.file`
-- `https://www.googleapis.com/auth/drive.metadata.readonly`
+```
+1. Start MongoDB (docker compose up -d)
+2. ./start.sh                    ← starts tunnel + API + web
+3. Open http://localhost:5173/setup
+4. Create super_admin
+5. Login → Businesses → create first business
+6. Add admin user
+7. Integrations → Connect Google Drive
+8. Integrations → Connect Instagram
+9. Drive Browser → browse folders → import files
+10. Content Queue → plan scheduling and captions
+   OR
+10. Automations → create Folder Automation → Fetch Now
+```
 
-These are narrower than full Drive access and fit this product better for file operations and metadata reads.
+---
 
-## Local Startup
+## LAN / Other Devices
 
-1. Start MongoDB
-2. Start API
-3. Start frontend
-4. Create `super_admin`
-5. Create first business
-6. Add `admin` user
-7. Add `user` if needed
-8. Connect Drive
-9. Connect Instagram
-10. Start media and post flow
+Vite exposes a network URL automatically. If `VITE_API_URL` is empty, the frontend auto-targets the current host on port `4000` — it will work on any device on the same Wi-Fi.
+
+For Google Drive OAuth from another device, set `GOOGLE_REDIRECT_URI` to your machine's LAN IP:
+```bash
+GOOGLE_REDIRECT_URI=http://192.168.1.x:4000/api/google-drive/oauth/callback
+```

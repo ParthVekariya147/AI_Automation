@@ -20,10 +20,12 @@ export async function runAutomation(automationId: string, triggeredBy: string) {
   automation.lastFetchedAt = new Date();
   await automation.save();
 
+  const isSystemTrigger = triggeredBy === "scheduler" || !triggeredBy.match(/^[a-f\d]{24}$/i);
   const run = await AutomationRun.create({
     automationId: automation._id,
     businessId: automation.businessId,
-    triggeredBy,
+    triggeredBy: isSystemTrigger ? null : triggeredBy,
+    triggeredByLabel: isSystemTrigger ? triggeredBy : "user",
   });
 
   try {

@@ -1,75 +1,56 @@
-# AI Instagram Automation Suite
+# Postlane — Instagram Automation Suite
 
-Monorepo starter for a multi-user, multi-business Instagram automation SaaS built with:
+Monorepo for a multi-user, multi-business Instagram scheduling and automation SaaS.
 
-- `apps/api`: Express + TypeScript + MongoDB
-- `apps/web`: React + Vite + TailwindCSS
-- `packages/*`: shared placeholders for future extracted types/config/utils
+- `apps/api` — Express + TypeScript + MongoDB
+- `apps/web` — React + Vite + TailwindCSS
+- `packages/*` — shared type/config/utils stubs
 
 ## Product Scope
 
-- Multi-tenant SaaS with `super_admin`, `admin`, and `user` roles
+- Multi-tenant SaaS: `super_admin`, `admin`, and `user` roles
 - Multiple Instagram accounts per business
-- Google Drive optional per admin workflow
-- Drive Browser for folder/file preview and import
-- Content Queue table for `File Name`, `Drive File ID`, `Status`, `Group ID`, `Post Type`, `Scheduled Time`, `AI Caption`, `IG Media ID`, and `Likes / Reach`
-- Detail page per file for scheduling and metadata edits
+- Google Drive integration (browse, import, auto-publish from folders)
+- Local file upload support
+- Content Queue with planning fields: Status, Group ID, Post Type, Scheduled Time, AI Caption, IG Media ID, Likes/Reach
+- Queue Detail page for per-file scheduling and edits
+- **Folder Automations** — watch a Drive folder, generate AI captions via Gemini, group files, and auto-schedule posts to Instagram
+- Gemini AI caption generation and hashtag suggestions
+- Image aspect-ratio fitting for Instagram (blur-padded background)
+- Background scheduler that publishes due posts every 60 seconds
 
 ## Quick Start
 
-1. Install dependencies:
-
 ```bash
 npm install
+docker compose up -d   # start MongoDB
+./start.sh             # start API + web + Cloudflare tunnel
 ```
 
-2. Start MongoDB:
-
-```bash
-docker compose up -d
-```
-
-3. **Start the app with the tunnel script** (required for Instagram publishing):
-
-```bash
-./start.sh
-```
-
-4. Open the frontend:
-
-```bash
-http://localhost:5173
-```
+Frontend: `http://localhost:5173`
 
 ## Tunnel Setup (Required for Instagram Publishing)
 
-Instagram's Graph API must **fetch the media file** from a public URL during container creation. `localhost` is not reachable from Meta servers. The startup script uses Cloudflare Tunnel to expose the local API on a temporary public HTTPS URL.
+Instagram's Graph API fetches media from a **public URL** during container creation. `localhost` is not reachable from Meta servers. The startup script uses a Cloudflare Quick Tunnel to expose the local API.
 
-**Always start the app with:**
+**Always start with:**
 ```bash
 ./start.sh
 ```
 
 This script:
-1. Starts a Cloudflare quick tunnel pointing to `localhost:4000`
+1. Starts a Cloudflare quick tunnel → `localhost:4000`
 2. Reads the generated `*.trycloudflare.com` URL
 3. Writes it to `apps/api/.env` as `PUBLIC_API_URL`
 4. Starts API + Web (`npm run dev:all`)
 
-**Each restart gets a new tunnel URL** — free quick tunnels are temporary. The script updates the env automatically; no manual step needed.
+Each restart gets a new tunnel URL — the script updates `.env` automatically.
 
 **For production:** Use a permanent Cloudflare named tunnel or deploy to a public HTTPS host.
 
-**Without tunnel:** Publishing will fail with "Instagram could not fetch the media URL" because Meta cannot reach `http://localhost:4000`.
-
 ## Instagram OAuth Setup (Meta)
 
-The app already includes Instagram OAuth endpoints:
-
-- `GET /api/instagram/oauth/start`
-- `GET /api/instagram/oauth/callback`
-
-Add these keys in `apps/api/.env`:
+Add to `apps/api/.env`:
 
 ```bash
 FACEBOOK_APP_ID=your_meta_app_id
@@ -79,72 +60,76 @@ FACEBOOK_GRAPH_API_VERSION=v25.0
 FACEBOOK_SCOPES=instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement
 ```
 
-How to generate Meta credentials:
+Steps to generate Meta credentials:
 
-1. Go to Meta for Developers and create a new app (Business type).
-2. Add `Facebook Login for Business` and `Instagram Graph API` products.
-3. Open App Settings -> Basic and copy `App ID` and `App Secret`.
-   Do not paste a user access token in `FACEBOOK_APP_SECRET`; it must be the app secret from dashboard.
-4. In Facebook Login settings, add this redirect URI exactly:
-	`http://localhost:4000/api/instagram/oauth/callback`
-5. In app roles, add yourself as a tester/developer and connect a Facebook Page with an Instagram Professional account.
+1. Go to Meta for Developers → create a new Business app.
+2. Add **Facebook Login for Business** and **Instagram Graph API** products.
+3. App Settings → Basic → copy `App ID` and `App Secret` (not a user access token).
+4. Facebook Login settings → add redirect URI exactly: `http://localhost:4000/api/instagram/oauth/callback`
+5. Add yourself as a tester/developer and link a Facebook Page to an Instagram Professional account.
 
-## Frontend -> API Connection (Env)
+## Google Drive Setup
 
-Frontend API URL is controlled by `apps/web/.env`:
+Add to `apps/api/.env`:
 
+```bash
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
+GOOGLE_REDIRECT_URI=http://localhost:4000/api/google-drive/oauth/callback
+GOOGLE_DRIVE_SCOPES=https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly
+```
+
+## Gemini AI Setup
+
+```bash
+GEMINI_API_KEY=your_gemini_key
+```
+
+Used for: AI caption generation (Queue Detail → **Generate with Gemini**) and automated caption generation in Folder Automations. Supports multiple keys — set `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` etc. for parallel automation runs.
+
+## Frontend → API Connection
+
+`apps/web/.env`:
 ```bash
 VITE_API_URL=http://localhost:4000/api
 ```
 
-If `VITE_API_URL` is empty, frontend auto-targets current host on port `4000`.
-
-For other devices on the same Wi-Fi:
-
-- the Vite dev server now exposes a network URL
-- the API now accepts LAN development origins
-- the frontend automatically targets the current host on port `4000` when `VITE_API_URL` is empty
-
-If you test Google Drive OAuth from another device, set `GOOGLE_REDIRECT_URI` in [apps/api/.env](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/.env) to your machine's LAN callback URL, for example:
-
-```bash
-http://192.168.1.108:4000/api/google-drive/oauth/callback
-```
+If blank, frontend auto-targets current host on port `4000`.
 
 ## API Bootstrapping
 
-Create the first `super_admin` account with:
+```
+POST /api/auth/bootstrap
+```
 
-- `POST /api/auth/bootstrap`
+Creates the first `super_admin`. Disabled after first call.
 
-After the first account exists, the bootstrap route is disabled.
+## Core Modules
 
-## Core Backend Modules
-
-- Authentication and JWT sessions
-- Role-based access control
+- JWT auth + role-based access control
 - Business tenancy and memberships
-- Instagram account records
-- Google Drive connection records
-- Media asset library
-- Post drafts, scheduling, and publish logs
-- Likes analytics history
-
-## Notes
-
-- Third-party publishing and sync services are scaffolded with service boundaries, but production tokens, app review, and webhook flows still need live API credentials.
-- Local uploads are supported for development, but long-term storage should be Google Drive or another durable object store.
-- CORS is locked to the frontend URLs in `apps/api/.env` with a central allowlist in [env.ts](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/src/config/env.ts) and enforced in [app.ts](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/src/app.ts).
-- Google Drive secrets should live only in [apps/api/.env](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/.env), not in the frontend env file.
-- Gemini caption generation requires `GEMINI_API_KEY` in [apps/api/.env](/Users/yashmadhavtech/Documents/AI_Automation/apps/api/.env). Use Queue Detail → **Generate with Gemini** to create AI captions from image/video media.
-- A fuller project status and setup guide lives in [docs/PHASE_1_SETUP.md](/Users/yashmadhavtech/Documents/AI_Automation/docs/PHASE_1_SETUP.md).
-- Full user workflow guide lives in [docs/WORKFLOW_USER_GUIDE.md](/Users/yashmadhavtech/Documents/AI_Automation/docs/WORKFLOW_USER_GUIDE.md).
+- Instagram account OAuth (Meta Graph API)
+- Google Drive OAuth + file browsing + thumbnail cache
+- Media asset library (local upload + Drive import)
+- Content Queue (planning, scheduling, AI captions)
+- Post drafts, publish flow, background scheduler
+- **Folder Automations** — Drive folder → AI captions → grouped post drafts → scheduled publishing
+- Image aspect-ratio fitting via Sharp (blur-padded background for feed posts)
+- Analytics like-count snapshots
+- Audit log
 
 ## Current Workflow
 
-1. `super_admin` logs in and creates the first business.
-2. `admin` opens `Drive Browser`.
-3. `admin` connects Google Drive and checks `Connected / Not connected / Disconnected`.
-4. the app fetches Drive folders/files and displays that data.
-5. team imports the required media into the queue.
-6. team uses `Content Queue` to manage scheduling, grouping, captions, and performance fields.
+1. `super_admin` creates the first business.
+2. `admin` connects Google Drive and Instagram via `Integrations` page.
+3. `admin` browses Drive in `Drive Browser`, imports media to queue.
+4. Team uses `Content Queue` to plan scheduling, grouping, and captions.
+5. Alternatively: create a **Folder Automation** in `Automations` — the system fetches Drive files, generates AI captions, groups them, and schedules posts automatically.
+6. Background scheduler publishes due posts every 60 seconds.
+
+## Documentation
+
+- Full setup guide: [`docs/PHASE_1_SETUP.md`](docs/PHASE_1_SETUP.md)
+- Complete project reference: [`docs/PROJECT_COMPLETE_DOCS.md`](docs/PROJECT_COMPLETE_DOCS.md)
+- User workflow guide: [`docs/WORKFLOW_USER_GUIDE.md`](docs/WORKFLOW_USER_GUIDE.md)
+- Automations deep-dive: [`docs/AUTOMATIONS_GUIDE.md`](docs/AUTOMATIONS_GUIDE.md)

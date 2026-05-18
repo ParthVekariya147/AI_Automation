@@ -7,6 +7,7 @@ interface AuthState {
   user?: SessionUser;
   memberships: Membership[];
   activeBusinessId?: string;
+  defaultCollaborator: string;
   setSession: (payload: {
     token: string;
     user: SessionUser;
@@ -14,19 +15,29 @@ interface AuthState {
   }) => void;
   clearSession: () => void;
   setActiveBusinessId: (businessId: string) => void;
+  setDefaultCollaborator: (handle: string) => void;
   hydrateMe: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   memberships: [],
+  defaultCollaborator: localStorage.getItem("automation.defaultCollaborator") ?? "",
+  setDefaultCollaborator: (handle) => {
+    const cleaned = handle.trim().replace(/^@/, "");
+    localStorage.setItem("automation.defaultCollaborator", cleaned);
+    set({ defaultCollaborator: cleaned });
+  },
   setSession: ({ token, user, memberships }) => {
     setApiToken(token);
-    const fallbackBusinessId = memberships[0]?.businessId?._id;
+    const savedBusinessId = localStorage.getItem("automation.activeBusinessId");
+    const validSaved = savedBusinessId && memberships.some(
+      (m) => m.businessId._id === savedBusinessId
+    );
     set({
       token,
       user,
       memberships,
-      activeBusinessId: fallbackBusinessId
+      activeBusinessId: validSaved ? savedBusinessId : memberships[0]?.businessId?._id
     });
     localStorage.setItem("automation.session", JSON.stringify({ token }));
   },
@@ -39,6 +50,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       user: undefined,
       memberships: [],
       activeBusinessId: undefined
+      // keep defaultCollaborator — it's a user preference, not session data
     });
   },
   setActiveBusinessId: (activeBusinessId) => {

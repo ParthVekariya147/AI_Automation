@@ -103,7 +103,10 @@ const mediaAssetSchema = new Schema<MediaAssetEntity>(
 
 mediaAssetSchema.pre("validate", function inferPostType(next) {
   if (this.postType === "reel") return next();
-  if (!this.isModified("postType") || this.postType === undefined) {
+  // Only auto-infer when this is a new document OR groupId/mediaType changed
+  // (not on every unrelated field save, which would silently override explicit postType)
+  const shouldInfer = this.isNew || this.isModified("groupId") || this.isModified("mediaType");
+  if (shouldInfer) {
     if (this.mediaType === "video") {
       this.postType = "video";
     } else if (this.groupId && this.mediaType === "image") {

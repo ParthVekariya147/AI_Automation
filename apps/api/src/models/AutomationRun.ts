@@ -3,7 +3,8 @@ import mongoose, { Schema, Document, Types } from "mongoose";
 export interface IAutomationRun extends Document {
   automationId: Types.ObjectId;
   businessId: Types.ObjectId;
-  triggeredBy: Types.ObjectId;
+  triggeredBy: Types.ObjectId | null;
+  triggeredByLabel: string;
   startedAt: Date;
   finishedAt?: Date;
   filesImported: number;
@@ -17,7 +18,8 @@ const AutomationRunSchema = new Schema<IAutomationRun>(
   {
     automationId: { type: Schema.Types.ObjectId, ref: "FolderAutomation", required: true, index: true },
     businessId: { type: Schema.Types.ObjectId, ref: "Business", required: true },
-    triggeredBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    triggeredBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    triggeredByLabel: { type: String, default: "scheduler" },
     startedAt: { type: Date, default: Date.now },
     finishedAt: Date,
     filesImported: { type: Number, default: 0 },

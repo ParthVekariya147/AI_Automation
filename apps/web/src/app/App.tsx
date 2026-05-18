@@ -10,6 +10,7 @@ import { IntegrationsPage } from "../pages/IntegrationsPage";
 import { LoginPage } from "../pages/LoginPage";
 import { PostsPage } from "../pages/PostsPage";
 import { AutomationsPage } from "../pages/AutomationsPage";
+import { StudioPage } from "../pages/StudioPage";
 import { SetupPage } from "../pages/SetupPage";
 import { useAuthStore } from "../store/auth-store";
 
@@ -55,6 +56,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/drive-browser" element={<DriveBrowserPage />} />
+                <Route path="/studio" element={<StudioPage />} />
                 <Route path="/posts" element={<PostsPage />} />
                 <Route path="/businesses" element={<BusinessesPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />

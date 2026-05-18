@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useToast } from "../components/ToastProvider";
 import { api } from "../lib/api";
 import { extractApiError } from "../lib/errors";
@@ -37,6 +37,7 @@ function gridClass(mode: MediaViewMode): string {
 
 export function DriveBrowserPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const toast = useToast();
   const activeBusinessId = useAuthStore((state) => state.activeBusinessId);
   const [searchParams] = useSearchParams();
@@ -65,7 +66,7 @@ export function DriveBrowserPage() {
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
   const { data: importedAssets = [] } = useQuery<MediaAsset[]>({
-    queryKey: ["queue-overview", activeBusinessId],
+    queryKey: ["media-overview", activeBusinessId],
     queryFn: async () =>
       (await api.get("/media", { params: { businessId: activeBusinessId } })).data.data,
     enabled: Boolean(activeBusinessId)
@@ -309,18 +310,18 @@ export function DriveBrowserPage() {
       toast({
         tone: already ? "info" : "success",
         title: already ? "Already imported" : "File imported",
-        description: already ? `${file.name} is already in the content queue.` : `${file.name} was added to the content queue.`
+        description: already ? `${file.name} is already imported.` : `${file.name} was added to the media library.`
       });
-      queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
-      queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+      queryClient.invalidateQueries({ queryKey: ["media-overview", activeBusinessId] });
       queryClient.invalidateQueries({ queryKey: ["media", activeBusinessId] });
+      if (!already) navigate("/studio");
     } catch (error) {
       const message = extractApiError(error, "File could not be imported.");
       const isDupe = /already exists|already imported|duplicate/i.test(message);
       toast({
         tone: isDupe ? "info" : "error",
         title: isDupe ? "Already imported" : "Import failed",
-        description: isDupe ? `${file.name} is already in the content queue.` : message
+        description: isDupe ? `${file.name} is already imported.` : message
       });
     } finally {
       setImportingFileIds((prev) => { const s = new Set(prev); s.delete(file.id); return s; });
@@ -354,12 +355,12 @@ export function DriveBrowserPage() {
     toast({
       tone: failCount > 0 ? "error" : "success",
       title: "Bulk import finished",
-      description: `Imported ${newCount}. ${alreadyCount > 0 ? `${alreadyCount} already in queue. ` : ""}${failCount > 0 ? `Failed: ${failCount}.` : ""}`
+      description: `Imported ${newCount}. ${alreadyCount > 0 ? `${alreadyCount} already imported. ` : ""}${failCount > 0 ? `Failed: ${failCount}.` : ""}`
     });
-    queryClient.invalidateQueries({ queryKey: ["queue-overview", activeBusinessId] });
-    queryClient.invalidateQueries({ queryKey: ["queue", activeBusinessId] });
+    queryClient.invalidateQueries({ queryKey: ["media-overview", activeBusinessId] });
     queryClient.invalidateQueries({ queryKey: ["media", activeBusinessId] });
     setSelectedFileIds([]);
+    if (newCount > 0) navigate("/studio");
   }
 
   useEffect(() => {
@@ -401,7 +402,7 @@ export function DriveBrowserPage() {
       <PageHeader
         eyebrow="Pipeline"
         title="Drive Browser"
-        subtitle="Browse Google Drive and import media into the content queue."
+        subtitle="Browse Google Drive and import media into the media library."
         actions={<Pill tone={connStateTone}>{connectionState.replace("_", " ")}</Pill>}
       />
 
@@ -425,7 +426,7 @@ export function DriveBrowserPage() {
           { label: "Source",       value: connectedDrive ? "Google Drive" : "Not Connected", sub: connectedDrive?.accountEmail },
           { label: "Folders",      value: connectedDrive && hasFetchedData ? Object.keys(folderTree).length : 0, sub: "Total folders" },
           { label: "Files Found",  value: hasFetchedData ? mediaFiles.length : 0, sub: lastFetchedFolderName ? `From ${lastFetchedFolderName}` : "Select a folder" },
-          { label: "Imported",     value: importedAssets.length, sub: "In Queue" },
+          { label: "Imported",     value: importedAssets.length, sub: "To Posts" },
         ].map((s) => (
           <div key={s.label} className="card p-3">
             <p className="section-eyebrow mb-1">{s.label}</p>

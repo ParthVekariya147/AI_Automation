@@ -43,24 +43,24 @@ function StatCard({
 export function DashboardPage() {
   const { user, activeBusinessId } = useAuthStore();
 
-  const { data: queueItems, isLoading } = useQuery<MediaAsset[]>({
-    queryKey: ["queue-overview", activeBusinessId],
+  const { data: mediaItems, isLoading } = useQuery<MediaAsset[]>({
+    queryKey: ["media-overview", activeBusinessId],
     queryFn: async () =>
       (await api.get("/media", { params: { businessId: activeBusinessId } })).data.data,
     enabled: Boolean(activeBusinessId)
   });
 
-  const statusCounts = (queueItems || []).reduce<Record<string, number>>((acc, item) => {
+  const statusCounts = (mediaItems || []).reduce<Record<string, number>>((acc, item) => {
     acc[item.workflowStatus] = (acc[item.workflowStatus] || 0) + 1;
     return acc;
   }, {});
 
-  const upcoming = (queueItems || [])
+  const upcoming = (mediaItems || [])
     .filter((item) => item.scheduledTime)
     .sort((a, b) => new Date(a.scheduledTime!).getTime() - new Date(b.scheduledTime!).getTime())
     .slice(0, 5);
 
-  const recentLive = (queueItems || [])
+  const recentLive = (mediaItems || [])
     .filter((item) => item.workflowStatus === "live")
     .slice(0, 6);
 
@@ -126,8 +126,8 @@ export function DashboardPage() {
               <p className="section-eyebrow mb-1">Pipeline</p>
               <h2 className="text-[17px] font-bold" style={{ color: "var(--ink)" }}>Up next</h2>
             </div>
-            <Link to="/queue" className="btn-secondary text-[12px]">
-              View Queue
+            <Link to="/posts" className="btn-secondary text-[12px]">
+              View Posts
               <Icons.ArrowRight size={13} />
             </Link>
           </div>
@@ -148,14 +148,14 @@ export function DashboardPage() {
                 <p className="text-sm font-semibold" style={{ color: "var(--ink-2)" }}>No scheduled items yet</p>
                 <p className="mt-0.5 text-xs" style={{ color: "var(--muted)" }}>Import files from Drive and assign a schedule</p>
               </div>
-              <Link to="/queue" className="btn-primary text-[12px]">Open Queue</Link>
+              <Link to="/posts" className="btn-primary text-[12px]">Open Posts</Link>
             </div>
           ) : (
             <div className="divide-line">
               {upcoming.map((item, i) => (
                 <Link
                   key={item._id}
-                  to={`/queue/${item._id}`}
+                  to="/posts"
                   className="flex items-center justify-between py-3 gap-3 group"
                   style={{ color: "var(--ink)" }}
                 >
@@ -194,7 +194,7 @@ export function DashboardPage() {
           <div className="space-y-1.5">
             {[
               { to: "/drive-browser", label: "Drive Browser", desc: "Browse & import media", icon: <Icons.Drive size={14} /> },
-              { to: "/queue", label: "Content Queue", desc: "Manage media workflow", icon: <Icons.Layers size={14} /> },
+              { to: "/studio", label: "Studio", desc: "Full content pipeline", icon: <Icons.Layers size={14} /> },
               { to: "/posts", label: "Posts", desc: "Draft, schedule & publish", icon: <Icons.Image size={14} /> },
               { to: "/automations", label: "Automations", desc: "Set-and-forget publishing", icon: <Icons.Bolt size={14} /> },
               { to: "/integrations", label: "Integrations", desc: "Connect accounts", icon: <Icons.Plug size={14} /> },
@@ -227,7 +227,7 @@ export function DashboardPage() {
               <p className="section-eyebrow mb-0.5">Content</p>
               <h2 className="text-[17px] font-bold" style={{ color: "var(--ink)" }}>Last published</h2>
             </div>
-            <Link to="/queue?status=live" className="btn-ghost">
+            <Link to="/posts?status=live" className="btn-ghost">
               View all <Icons.ArrowRight size={13} />
             </Link>
           </div>
@@ -235,7 +235,7 @@ export function DashboardPage() {
             {recentLive.map((item) => (
               <Link
                 key={item._id}
-                to={`/queue/${item._id}`}
+                to="/posts"
                 className="group relative aspect-square overflow-hidden rounded-xl"
                 style={{ background: "var(--bg-2)" }}
               >

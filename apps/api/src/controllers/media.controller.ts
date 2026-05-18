@@ -425,7 +425,11 @@ export const generateMediaCaption = asyncHandler(async (req: AuthedRequest, res:
   asset.captionStatus = "done";
   asset.failedAttempts = 0;
   asset.failedReason = undefined;
-  if (asset.workflowStatus === "manual_review") asset.workflowStatus = "new";
+  // Only clear manual_review if it was caused by a caption failure (not a publish failure)
+  // captionStatus was just set to "done", so this is safe to unblock
+  if (asset.workflowStatus === "manual_review" && asset.captionStatus === "done") {
+    asset.workflowStatus = "new";
+  }
   await asset.save();
 
   await createAuditLog({

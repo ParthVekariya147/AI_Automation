@@ -46,7 +46,7 @@ export function AutomationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["automations"] });
       queryClient.invalidateQueries({ queryKey: ["posts"] });
-      queryClient.invalidateQueries({ queryKey: ["queue"] });
+      queryClient.invalidateQueries({ queryKey: ["media"] });
       toast({ tone: "success", title: "Fetch triggered successfully" });
     },
     onError: (err) => {
