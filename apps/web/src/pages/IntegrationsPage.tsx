@@ -62,7 +62,7 @@ export function IntegrationsPage() {
     <div className="grid gap-6 xl:grid-cols-2">
       <Panel
         title="Google Drive"
-        description="Connect your workspace Google Drive to import images and videos directly into your media library."
+        description="Connect your workspace Google Drive to import images and videos directly into your content queue."
       >
         <div className="rounded-3xl bg-[#f6f7f2] p-5">
           <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Drive status</p>
