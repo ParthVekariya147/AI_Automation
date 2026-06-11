@@ -252,6 +252,7 @@ export function DriveBrowserPage() {
       setLastSelectedIndex(null);
     } catch (error) {
       setFetchError(extractApiError(error, "Drive data could not be fetched for this folder."));
+      if (!append) setLastFetchedFolderId(selectedFolderId);
     } finally {
       if (append) { setIsFetchingMoreFiles(false); } else { setIsFetchingData(false); }
     }

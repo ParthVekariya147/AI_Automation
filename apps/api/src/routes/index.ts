@@ -21,6 +21,16 @@ apiRouter.post("/scheduler/run-now", requireAuth, async (_req, res) => {
   res.json({ success: true, data: result });
 });
 
+apiRouter.post("/scheduler/cron", async (req, res) => {
+  const secret = process.env.SCHEDULER_SECRET;
+  if (secret && req.headers["x-cron-secret"] !== secret) {
+    res.status(401).json({ success: false, message: "Unauthorized" });
+    return;
+  }
+  const result = await runNow();
+  res.json({ success: true, data: result });
+});
+
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/businesses", businessRouter);
 apiRouter.use("/instagram", instagramRouter);
