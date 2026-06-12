@@ -1,8 +1,8 @@
 # Postlane — Complete Project Documentation
 
-> Updated: 2026-05-12
-> Codebase: `/Users/yashmadhavtech/Documents/AI_Automation`
-> Stack: Node.js + Express + MongoDB (API) · React + Vite + Tailwind (Web)
+> Updated: 2026-06-12
+> Codebase: `apps/api` (Node.js + Express + MongoDB) · `apps/web` (React + Vite + Tailwind)
+> Monorepo root: `/AI_Automation`
 
 ---
 
@@ -12,32 +12,38 @@
 2. [Architecture & Tech Stack](#2-architecture--tech-stack)
 3. [Monorepo Structure](#3-monorepo-structure)
 4. [Data Models](#4-data-models)
-5. [Frontend Pages](#5-frontend-pages)
-6. [Backend Services](#6-backend-services)
-7. [API Routes Summary](#7-api-routes-summary)
-8. [Auth & Session System](#8-auth--session-system)
-9. [State Management](#9-state-management)
-10. [Environment Variables](#10-environment-variables)
-11. [Known Bugs](#11-known-bugs)
-12. [Improvement Opportunities](#12-improvement-opportunities)
-13. [Recommended Next Features](#13-recommended-next-features)
+5. [API Routes Reference](#5-api-routes-reference)
+6. [Core Services](#6-core-services)
+7. [Frontend Pages](#7-frontend-pages)
+8. [Auth & Middleware](#8-auth--middleware)
+9. [Environment Variables](#9-environment-variables)
+10. [Deployment](#10-deployment)
+11. [Scheduler & Automation Engine](#11-scheduler--automation-engine)
+12. [AI Caption System (Gemini)](#12-ai-caption-system-gemini)
+13. [Instagram Publishing Pipeline](#13-instagram-publishing-pipeline)
+14. [Google Drive Integration](#14-google-drive-integration)
+15. [Image Fitting (Sharp)](#15-image-fitting-sharp)
+16. [Error Handling & Retry Logic](#16-error-handling--retry-logic)
+17. [How-To Guides](#17-how-to-guides)
 
 ---
 
 ## 1. Project Overview
 
-**Postlane** (working name: Instagram Automation Suite) is a self-hosted social media management platform for agency teams and solo operators to:
+**Postlane** is a self-hosted, multi-tenant Instagram content scheduling and automation platform for agency teams and solo operators.
 
-- Browse and import media from **Google Drive** into a content queue
-- Use **Gemini AI** to generate Instagram captions and hashtags from media files
-- Manage post drafts with scheduling, hashtags, and collaborators
-- **Publish directly to Instagram** (single, carousel, video, reel) via Meta Graph API
-- Run **Folder Automations** that watch a Drive folder, auto-generate captions, group files, and schedule posts — all without manual work
-- Auto-schedule posts with a background scheduler (60-second tick)
-- Track basic analytics (like-count snapshots)
-- Fit images to Instagram's allowed aspect ratios automatically using blur-padded backgrounds
+**Core capabilities:**
 
-Every resource belongs to a **Business** workspace. All roles share the same `/login` route; membership determines which business a user accesses.
+- Browse and import media from **Google Drive** or local uploads into a content queue
+- Use **Gemini AI** (gemini-2.5-flash) to generate Instagram captions and hashtags from media files
+- Manage post drafts with scheduling, hashtags, grouping (carousel), and collaborators
+- **Publish directly to Instagram** — single image, carousel, video, reel — via Meta Graph API
+- Run **Folder Automations** that watch a Drive folder, auto-generate captions, group files, and schedule posts without manual work
+- Background scheduler publishes due posts every 60 seconds
+- Fit images to Instagram's allowed aspect ratios using blur-padded backgrounds (Sharp)
+- Track basic analytics: like-count and reach snapshots
+
+Every resource belongs to a **Business** workspace. A user may be a member of multiple businesses.
 
 ---
 
@@ -45,15 +51,14 @@ Every resource belongs to a **Business** workspace. All roles share the same `/l
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18, Vite, TypeScript, Tailwind CSS v3, TanStack Query v5, Zustand, React Router v6 |
-| Backend | Node.js, Express 5 (ESM), TypeScript, Mongoose 8, Zod, JWT, Multer |
-| Database | MongoDB (local or Atlas) |
-| AI | Google Gemini 2.5 Flash (captions, hashtags) |
-| Image Processing | Sharp (aspect-ratio fitting for Instagram) |
-| Social API | Meta Graph API v21+ (Instagram + Facebook OAuth) |
-| Drive API | Google OAuth 2.0 + Drive REST API v3 |
-| Scheduler | Custom interval-based (60s tick) |
-| Auth | JWT stored in localStorage (`automation.session`) |
+| Frontend | React 18, Vite 7 (SWC), TypeScript 5.9, Tailwind CSS v3, TanStack Query v5, Zustand v5, React Router v7, dnd-kit, Lucide icons, Axios |
+| Backend | Node.js (ESM), Express 4, TypeScript 5.9, Mongoose 8, Zod 4, JWT (jsonwebtoken), Multer, Morgan |
+| Database | MongoDB (local Docker or Atlas) |
+| AI | Google Gemini API (gemini-2.5-flash) — multi-key pool with automatic rotation |
+| External APIs | Meta Graph API v25.0 (Instagram publish), Google Drive API v3 |
+| Image Processing | Sharp 0.34 — blur-padded aspect-ratio fitting |
+| Tunnelling | Cloudflare Quick Tunnel — exposes local API for Instagram's media fetch |
+| Deployment | Docker + Docker Compose (local) · Fly.io · Render · Vercel (cron handler) |
 
 ---
 
@@ -62,729 +67,996 @@ Every resource belongs to a **Business** workspace. All roles share the same `/l
 ```
 AI_Automation/
 ├── apps/
-│   ├── api/                        # Express backend
+│   ├── api/                    # Express backend
 │   │   └── src/
-│   │       ├── config/             # env.ts, database.ts
-│   │       ├── controllers/        # auth, business, folder-automation,
-│   │       │                         integrations, media, post, report
-│   │       ├── middlewares/        # auth.ts, error-handler.ts
-│   │       ├── models/             # Mongoose schemas
-│   │       ├── routes/             # Route definitions
-│   │       ├── services/           # ai, audit, auto-publish, folder-automation,
-│   │       │                         google-drive, image-fit, instagram,
-│   │       │                         publish, scheduler, smart-timing
-│   │       ├── types.ts
-│   │       ├── utils/              # api-error, async-handler, auth
-│   │       ├── app.ts
-│   │       └── index.ts            # Server entry (starts scheduler)
-│   │
-│   └── web/                        # React frontend
+│   │       ├── app.ts          # Express app setup (CORS, middleware, routes)
+│   │       ├── index.ts        # Entry: DB connect, scheduler start, port binding
+│   │       ├── types.ts        # Shared TypeScript types (Role, PostStatus, etc.)
+│   │       ├── config/
+│   │       │   ├── database.ts # Mongoose connection
+│   │       │   └── env.ts      # Zod-validated env config
+│   │       ├── controllers/    # Route handlers
+│   │       ├── middlewares/
+│   │       │   ├── auth.ts     # requireAuth, requireBusinessRole
+│   │       │   └── error-handler.ts
+│   │       ├── models/         # Mongoose schemas
+│   │       ├── routes/         # Express routers
+│   │       ├── services/       # Business logic (publish, AI, Drive, scheduler…)
+│   │       └── utils/          # api-error, async-handler, auth (JWT/bcrypt)
+│   └── web/                    # React frontend
 │       └── src/
-│           ├── app/App.tsx
-│           ├── components/         # AppShell, Panel, ToastProvider,
-│           │                         automations/AutomationDrawer, queue/ConfirmDialog
-│           ├── lib/                # api.ts, ds.ts (design system), errors.ts,
-│           │                         media.ts, types.ts
-│           ├── pages/              # One file per route
-│           ├── store/              # auth-store.ts (Zustand)
-│           └── styles/index.css
-│
+│           ├── main.tsx        # React entry
+│           ├── app/            # Root app component, router
+│           ├── pages/          # One file per route
+│           ├── components/     # Shared UI components
+│           ├── store/          # Zustand stores + API client
+│           ├── lib/            # Utility helpers
+│           └── styles/         # Global CSS
 ├── packages/
-│   ├── config/
-│   ├── types/
-│   └── utils/
-│
-├── docs/
-│   ├── PHASE_1_SETUP.md
-│   ├── WORKFLOW_USER_GUIDE.md
-│   ├── PROJECT_COMPLETE_DOCS.md    ← This file
-│   └── AUTOMATIONS_GUIDE.md
-│
-├── reports/
-├── docker-compose.yml
-├── start.sh
-└── package.json
+│   ├── config/                 # Shared tsconfig stubs
+│   ├── types/                  # Shared TypeScript types (cross-package)
+│   └── utils/                  # Shared utility stubs
+├── docs/                       # Project documentation
+├── docker-compose.yml          # MongoDB for local dev
+├── Dockerfile                  # API container
+├── fly.toml                    # Fly.io deployment config
+├── render.yaml                 # Render deployment config
+├── start.sh                    # Dev launcher: tunnel + API + web
+├── tunnel.sh                   # Cloudflare tunnel helper
+└── package.json                # Monorepo root (npm workspaces)
 ```
 
 ---
 
 ## 4. Data Models
 
-### `MediaAsset` (MongoDB)
+All models live in `apps/api/src/models/`. Every model uses Mongoose and includes `timestamps: true` (auto `createdAt`, `updatedAt`).
 
-Core entity. Each Drive file or local upload = one queue row.
+### 4.1 User
+
+```
+Collection: users
+File: models/User.ts
+```
 
 | Field | Type | Notes |
 |---|---|---|
-| `_id` | ObjectId | |
-| `businessId` | ObjectId ref Business | Required, indexed |
-| `uploadedBy` | ObjectId ref User | Required |
+| `name` | String | required, trimmed |
+| `email` | String | required, unique, lowercase |
+| `passwordHash` | String | bcrypt hash |
+| `globalRole` | `"admin"` | only role currently in use |
+| `isActive` | Boolean | default `true` |
+
+All users currently share the `"admin"` global role. Role-based access is enforced at the **business membership** level.
+
+### 4.2 Business
+
+```
+Collection: businesses
+File: models/Business.ts
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | String | required |
+| `slug` | String | unique, lowercase — used as URL segment |
+| `timezone` | String | default `"Asia/Kolkata"` |
+| `isActive` | Boolean | default `true` |
+| `settings.allowDirectInstagramPosting` | Boolean | default `true` |
+| `settings.defaultMediaSource` | `"local" \| "google_drive"` | default `"local"` |
+
+### 4.3 Membership
+
+```
+Collection: memberships
+File: models/Membership.ts
+```
+
+Links a User to a Business. Enforces per-business access control.
+
+| Field | Type | Notes |
+|---|---|---|
+| `userId` | ObjectId → User | |
+| `businessId` | ObjectId → Business | |
+| `role` | `"admin"` | |
+| `status` | `"active" \| "invited" \| "disabled"` | |
+
+### 4.4 InstagramAccount
+
+```
+Collection: instagramaccounts
+File: models/InstagramAccount.ts
+```
+
+One Business can have multiple Instagram accounts.
+
+| Field | Type | Notes |
+|---|---|---|
+| `businessId` | ObjectId → Business | indexed |
+| `name` | String | display name |
+| `handle` | String | Instagram handle |
+| `igUserId` | String | Meta IG User ID |
+| `pageId` | String | Facebook Page ID |
+| `accessToken` | String | long-lived user access token |
+| `isActive` | Boolean | |
+
+### 4.5 GoogleDriveConnection
+
+```
+Collection: googledriveconnections
+File: models/GoogleDriveConnection.ts
+```
+
+Stores OAuth tokens for a Google Drive account linked to a Business.
+
+| Field | Type | Notes |
+|---|---|---|
+| `businessId` | ObjectId → Business | |
+| `email` | String | Google account email |
+| `accessToken` | String | current access token |
+| `refreshToken` | String | used to renew access |
+| `isActive` | Boolean | |
+
+### 4.6 MediaAsset
+
+```
+Collection: mediaassets
+File: models/MediaAsset.ts
+```
+
+Represents one media file — uploaded locally or imported from Drive.
+
+| Field | Type | Notes |
+|---|---|---|
+| `businessId` | ObjectId → Business | indexed |
+| `uploadedBy` | ObjectId → User | |
 | `source` | `"local" \| "google_drive" \| "instagram_direct"` | |
 | `mediaType` | `"image" \| "video"` | |
 | `originalName` | String | |
 | `mimeType` | String | |
 | `sizeInBytes` | Number | |
-| `filePath` | String | Local disk path |
-| `publicUrl` | String | Accessible URL for publishing |
-| `previewUrl` | String | Cached local thumbnail path |
-| `driveViewLink` | String | |
-| `driveThumbnailLink` | String | Raw Google CDN URL |
-| `folderName` | String | |
-| `driveFileId` | String | Unique per business (sparse index) |
-| `driveFolderId` | String | |
-| `status` | `"ready" \| "processing" \| "failed"` | |
-| `workflowStatus` | `"new" \| "scheduled" \| "posting" \| "live" \| "error" \| "manual_review"` | |
-| `captionStatus` | `"pending" \| "processing" \| "done" \| "failed"` | Tracks AI caption generation state |
-| `failedReason` | String | Why caption gen or publish failed |
-| `groupId` | String | Carousel grouping key |
-| `postType` | `"single" \| "carousel" \| "video" \| "reel"` | Auto-inferred in pre-validate hook |
+| `filePath` | String | local disk path |
+| `publicUrl` | String | URL served by Express `/uploads` |
+| `previewUrl` | String | thumbnail URL |
+| `driveFileId` | String | Drive file ID |
+| `driveFolderId` | String | Drive folder ID |
+| `driveThumbnailLink` | String | cached Drive thumbnail |
+| `status` | `"ready" \| "processing" \| "failed"` | asset processing state |
+| `workflowStatus` | `"new" \| "scheduled" \| "posting" \| "live" \| "error" \| "manual_review"` | mirrors PostDraft status |
+| `captionStatus` | `"pending" \| "processing" \| "done" \| "failed"` | AI caption state |
+| `groupId` | String | carousel grouping key |
+| `postType` | `"single" \| "carousel" \| "video" \| "reel"` | auto-inferred from mediaType + groupId |
 | `scheduledTime` | Date | |
-| `aiCaption` | String | Gemini-generated |
-| `hashtags` | String[] | Generated or manually entered |
-| `igMediaId` | String | After publishing |
-| `likeCount` | Number | Manual entry |
-| `reachCount` | Number | Manual entry |
-| `automationId` | ObjectId ref FolderAutomation | Set when created by an automation |
-
-**Pre-validate hook** (`models/MediaAsset.ts`):
-- Video → `postType = "video"`
-- Image + groupId → `postType = "carousel"`
-- Image, no groupId → `postType = "single"`
-- Reel type: cannot be auto-inferred — must be set explicitly (see BUG-002)
-
----
-
-### `PostDraft` (MongoDB)
-
-The publishing unit. Links multiple `MediaAsset` IDs into one post.
-
-| Field | Type | Notes |
-|---|---|---|
-| `businessId` | ObjectId ref Business | |
-| `instagramAccountId` | ObjectId ref InstagramAccount | |
-| `createdBy` | ObjectId ref User | |
-| `mediaAssetIds` | ObjectId[] ref MediaAsset | |
-| `title` | String | Required, min 2 chars |
-| `caption` | String | |
+| `aiCaption` | String | generated caption |
 | `hashtags` | String[] | |
-| `collaborators` | String[] | IG handles (no @) |
-| `scheduledFor` | Date | Scheduler uses this |
-| `smartTimingSuggestedFor` | Date | From SmartTiming service |
-| `status` | `"new" \| "scheduled" \| "posting" \| "live" \| "error" \| "manual_review"` | |
-| `postType` | `"single" \| "carousel" \| "video" \| "reel"` | |
-| `groupId` | String | |
-| `aiCaption` | String | |
-| `igMediaId` | String | After publishing |
-| `permalink` | String | Live IG post URL |
+| `automationId` | ObjectId → FolderAutomation | set when created by automation |
+| `fittedFilePath` | String | path to aspect-fitted image |
+| `fittedPublicUrl` | String | URL of fitted image |
+| `fitDimensions` | `{width, height, wasFitted}` | Sharp output metadata |
+| `igMediaId` | String | IG post ID after publish |
 | `likeCount` | Number | |
 | `reachCount` | Number | |
-| `automationId` | ObjectId ref FolderAutomation | Set when created by automation |
 
----
+**Auto-inference hook:** `postType` is set by a `pre("validate")` hook — `"video"` if mediaType is video, `"carousel"` if groupId is set, `"single"` otherwise. Reels must be set explicitly.
 
-### `FolderAutomation` (MongoDB)
+**Compound unique index:** `(businessId, driveFileId)` — prevents importing the same Drive file twice.
 
-Defines a rule: watch Drive folder → auto-import → AI captions → group → schedule posts.
+### 4.7 PostDraft
+
+```
+Collection: postdrafts
+File: models/PostDraft.ts
+```
+
+The central publish unit. One PostDraft → one Instagram post.
 
 | Field | Type | Notes |
 |---|---|---|
-| `businessId` | ObjectId ref Business | |
+| `businessId` | ObjectId → Business | indexed |
+| `instagramAccountId` | ObjectId → InstagramAccount | indexed |
+| `createdBy` | ObjectId → User | |
+| `mediaAssetIds` | ObjectId[] → MediaAsset | ordered list of assets |
+| `title` | String | internal label |
+| `caption` | String | final caption for publish |
+| `hashtags` | String[] | appended to caption on publish |
+| `aiCaption` | String | AI-generated draft caption |
+| `scheduledFor` | Date | when scheduler should publish |
+| `smartTimingSuggestedFor` | Date | AI-suggested time (not enforced) |
+| `status` | `"new" \| "scheduled" \| "posting" \| "live" \| "error" \| "manual_review"` | |
+| `postType` | `"single" \| "carousel" \| "video" \| "reel"` | determines publish API call |
+| `groupId` | String | links assets in a carousel |
+| `collaborators` | String[] | IG handles (without @) |
+| `collaboratorStatus` | `{username, status, checkedAt}[]` | fetched after publish |
+| `igMediaId` | String | returned by Meta after publish |
+| `permalink` | String | instagram.com/p/… |
+| `likeCount` | Number | |
+| `reachCount` | Number | |
+| `automationId` | ObjectId → FolderAutomation | set when created by automation |
+| `retryCount` | Number | default 0; max 2 before manual_review |
+| `needsManualReview` | Boolean | indexed; set after max retries |
+| `lastError` | String | last publish error message |
+| `livePostThumbnailUrl` | String | fetched from IG after publish |
+| `livePostFetchedAt` | Date | |
+| `driveUploadRequested` | Boolean | legacy flag |
+
+### 4.8 FolderAutomation
+
+```
+Collection: folderautomations
+File: models/FolderAutomation.ts
+```
+
+Defines a rule that watches a Drive folder and generates+schedules posts automatically.
+
+| Field | Type | Notes |
+|---|---|---|
+| `businessId` | ObjectId → Business | indexed |
 | `folderId` | String | Google Drive folder ID |
-| `folderName` | String | Display name |
-| `igAccountId` | ObjectId ref InstagramAccount | Target IG account |
-| `collaborators` | String[] | |
-| `groupingMode` | `"one_per_file" \| "batch_size" \| "subfolder"` | How files are grouped into posts |
-| `batchSize` | Number | Used when `groupingMode = "batch_size"` |
-| `carouselMaxSize` | Number | Default 10, hard cap per carousel |
-| `cadenceMode` | `"interval" \| "daily_slots" \| "smart"` | Scheduling strategy |
-| `intervalValue` | Number | e.g. `5` |
+| `folderName` | String | display name |
+| `igAccountId` | ObjectId → InstagramAccount | target account |
+| `collaborators` | String[] | IG handles to tag |
+| `groupingMode` | `"one_per_file" \| "batch_size" \| "subfolder"` | how to group files into posts |
+| `batchSize` | Number | used with `batch_size` grouping |
+| `carouselMaxSize` | Number | default 10, max carousel images |
+| `cadenceMode` | `"interval" \| "daily_slots" \| "smart"` | scheduling algorithm |
+| `intervalValue` | Number | e.g. 5 |
 | `intervalUnit` | `"minutes" \| "hours" \| "days"` | |
-| `dailySlots` | String[] | e.g. `["09:00", "14:00"]` |
-| `brandVoice` | String | Tone hint for Gemini captions |
-| `useEmojis` | Boolean | |
-| `reprocessImported` | Boolean | Re-run already-imported files |
-| `status` | `"idle" \| "running" \| "finished" \| "paused" \| "manual_review"` | |
-| `priority` | Number | Lower = runs first when chained |
-| `lastFetchedAt` | Date | |
+| `dailySlots` | String[] | e.g. `["09:00","14:00","18:00"]` |
+| `captionMode` | `"auto"` | always Gemini for now |
+| `brandVoice` | String | prompt injection into Gemini |
+| `useEmojis` | Boolean | default `true` |
+| `reprocessImported` | Boolean | re-caption already-imported files |
+| `status` | `"idle" \| "running" \| "finished" \| "paused" \| "manual_review"` | indexed |
+| `priority` | Number | lower = runs first; indexed |
+| `lastFetchedAt` | Date | last successful Drive fetch |
 | `finishedAt` | Date | |
 | `lastRunError` | String | |
+| `createdBy` | ObjectId → User | |
 
----
+**Compound index:** `(businessId, status, priority)` — optimises "find next idle automation."
 
-### `AutomationRun` (MongoDB)
+### 4.9 AutomationRun
 
-One execution record per automation trigger.
+```
+Collection: automationruns
+File: models/AutomationRun.ts
+```
+
+Audit trail: one record per execution of a FolderAutomation.
 
 | Field | Type | Notes |
 |---|---|---|
-| `automationId` | ObjectId ref FolderAutomation | |
-| `businessId` | ObjectId ref Business | |
-| `triggeredBy` | ObjectId ref User | |
+| `automationId` | ObjectId → FolderAutomation | |
+| `businessId` | ObjectId → Business | |
+| `status` | `"success" \| "error" \| "partial"` | |
+| `filesFound` | Number | |
+| `filesProcessed` | Number | |
+| `postsCreated` | Number | |
+| `errorMessage` | String | |
 | `startedAt` | Date | |
 | `finishedAt` | Date | |
-| `filesImported` | Number | |
-| `groupsCreated` | Number | |
-| `postsScheduled` | Number | |
-| `status` | `"running" \| "completed" \| "failed"` | |
-| `errorLog` | `{ step, message, at }[]` | Per-step failure log |
 
----
+### 4.10 PublishJob
 
-### Other Models
+```
+Collection: publishjobs
+File: models/PublishJob.ts
+```
 
-| Model | Purpose |
-|---|---|
-| `User` | Platform user — email, password (bcrypt), globalRole |
-| `Business` | Workspace — name, slug, timezone |
-| `Membership` | User ↔ Business link, role, status |
-| `InstagramAccount` | Connected IG account — igUserId, accessToken, pageId, handle |
-| `GoogleDriveConnection` | OAuth tokens for Drive per business |
-| `PublishJob` | Tracks publish attempts per draft |
-| `AuditLog` | Immutable action log |
-| `AnalyticsLike` | Like-count snapshot |
+Tracks each publish attempt for auditing.
 
----
-
-## 5. Frontend Pages
-
-### 5.1 Setup Page `/setup`
-
-One-time bootstrap for the first `super_admin`. Calls `POST /auth/bootstrap`. Disabled after first use.
-
----
-
-### 5.2 Login Page `/login`
-
-Auth for all roles. Sets JWT + session in Zustand + localStorage. Redirects to `/`.
-
----
-
-### 5.3 Dashboard Page `/`
-
-**File:** `apps/web/src/pages/DashboardPage.tsx`
-
-- Status stat cards (All Files, New, Scheduled, Live, Errors)
-- Upcoming schedule (next 5 items)
-- Workflow guide panel
-- Navigation guide panel
-
----
-
-### 5.4 Drive Browser Page `/drive-browser`
-
-**File:** `apps/web/src/pages/DriveBrowserPage.tsx`
-
-Most complex page. Handles Drive OAuth, folder tree, file grid, bulk import.
-
-| Feature | Detail |
-|---|---|
-| OAuth connect/disconnect | `GET /google-drive/oauth/start` → redirect → callback |
-| Folder tree sidebar | Recursive expand/collapse, depth indent, Photos/Videos/Both badge |
-| Folder filter | Text filter on folder list |
-| File grid (4 view modes) | Large, Medium, Small, Detailed list |
-| File search + type filter | Client-side filtering |
-| Multi-select | Click / Ctrl+Click / Shift+Click range |
-| Per-file import | Per-card Import button |
-| Bulk import | `Promise.allSettled` for all selected |
-| Duplicate detection | Already-imported badge, Re-import button |
-| Infinite scroll + load-more | `IntersectionObserver` on sentinel + manual fallback |
-| Server-side pagination | Drive API `pageToken` |
-| Disconnect Drive | `POST /google-drive/disconnect` |
-
----
-
-### 5.5 Content Queue Page `/queue`
-
-**File:** `apps/web/src/pages/QueuePage.tsx`
-
-Master planning table for all `MediaAsset` records.
-
-| Feature | Detail |
-|---|---|
-| Search | Filters by name, driveFileId, groupId, caption, folderName |
-| Select all / per-row checkbox | |
-| Bulk Group ID | Apply one Group ID to all selected rows |
-| Bulk Remove | Parallel DELETE with confirm |
-| Inline Status dropdown | Saves on change |
-| Inline Group ID input | Saves on blur; shows "View" link if set |
-| Inline Post Type dropdown | Saves on change |
-| Inline Scheduled Time | datetime-local, saves on blur |
-| Media thumbnail | 40×40 px; links to detail page |
-| Carousel / Manual Review status | New `manual_review` workflowStatus visible |
-
----
-
-### 5.6 Queue Detail Page `/queue/:id`
-
-**File:** `apps/web/src/pages/QueueDetailPage.tsx`
-
-Single media asset full edit + preview.
-
-| Feature | Detail |
-|---|---|
-| Media preview | Image `<img>` / Video `<video controls>` |
-| Meta card grid | Drive File ID, Folder, Status, Post Type, Group ID, Scheduled Time, IG Media ID, Likes/Reach |
-| Gemini caption | `POST /media/:id/generate-caption` |
-| Caption textarea | Saves on blur |
-| Status | Saves immediately on change |
-| Group ID, Post Type, Scheduled Time, IG Media ID, Likes/Reach | All save on blur |
-| Related group assets | Thumbnail grid of siblings if groupId is set |
-
-**Note:** Post Type now correctly includes `"reel"` in the selector options.
-
----
-
-### 5.7 Queue Group Page `/queue/group/:groupId`
-
-**File:** `apps/web/src/pages/QueueGroupPage.tsx`
-
-Carousel planning view — shows all assets sharing the same `groupId`. Grid of asset cards linking to individual detail pages.
-
----
-
-### 5.8 Posts Page `/posts`
-
-**File:** `apps/web/src/pages/PostsPage.tsx`
-
-Instagram publisher — manage `PostDraft` entities.
-
-Tabs: All / Draft / Scheduled / Live (with count badges)
-
-View modes: Small / Medium / Large grid, List
-
-Features: Create Drawer (right-side slide-in), Post Detail Modal (full edit), Broken Thumbnail Repair on mount, Prefill flow from Queue Detail, Hashtag AI suggestion, Publish Now, Delete with confirm.
-
----
-
-### 5.9 Automations Page `/automations`
-
-**File:** `apps/web/src/pages/AutomationsPage.tsx`
-
-Manage **Folder Automations** — rules that watch a Drive folder, generate AI captions, and auto-schedule posts.
-
-| Feature | Detail |
-|---|---|
-| Stats bar | Total / Running / Paused / Needs Review |
-| Automation cards | Status badge, folder name, cadence label, IG account, last run info, error message |
-| New Automation wizard | Multi-step drawer: folder selection → grouping → cadence → review |
-| Edit automation | Same drawer in edit mode |
-| Fetch Now | `POST /automations/:id/fetch` — triggers immediate run |
-| Pause / Resume | `POST /automations/:id/pause` and `/resume` |
-| Delete | With confirm dialog |
-| Run history | `GET /automations/:id/runs` |
-| Auto-refresh | TanStack Query polls every 10s when any automation is `running` |
-| Preview | Before saving, shows which files will be grouped and when they'll be scheduled |
-
-**Cadence modes:**
-- `smart` — delegates to SmartTiming service
-- `interval` — every N minutes/hours/days
-- `daily_slots` — post at specific times each day (e.g. `["09:00", "14:00", "18:00"]`)
-
-**Grouping modes:**
-- `one_per_file` — one post per Drive file
-- `batch_size` — N files per post (carousel)
-- `subfolder` — group files by Drive subfolder
-
----
-
-### 5.10 Businesses Page `/businesses`
-
-**File:** `apps/web/src/pages/BusinessesPage.tsx`
-
-Create businesses, add members, assign roles (`admin` / `user`), set passwords.
-
----
-
-### 5.11 Integrations Page `/integrations`
-
-**File:** `apps/web/src/pages/IntegrationsPage.tsx`
-
-Connect/disconnect Instagram accounts and view Google Drive status.
-
-| Feature | Detail |
-|---|---|
-| Instagram panel | Account list, connect via Facebook OAuth, disconnect |
-| Drive panel | Status (Connected / Disconnected / Not connected), connected email, link to Drive Browser |
-| Success/error banners | Parsed from URL params after OAuth redirect |
-
----
-
-### 5.12 Analytics Page `/analytics`
-
-**File:** `apps/web/src/pages/AnalyticsPage.tsx`
-
-Manual like-count snapshots. MVP only — no auto-fetch from IG API yet.
-
----
-
-### 5.13 Media Page (Dev Tool) `/media`
-
-**File:** `apps/web/src/pages/MediaPage.tsx`
-
-Internal developer tool for manual local uploads and Drive metadata imports. Not exposed in the main navigation — accessible by direct URL only.
-
----
-
-## 6. Backend Services
-
-### 6.1 AI Service
-
-**File:** `apps/api/src/services/ai.service.ts`
-
-| Function | Description |
-|---|---|
-| `generateInstagramCaptionFromMedia(input)` | Sends base64 media to Gemini 2.5 Flash → returns `{ caption, hashtags }` |
-| `suggestHashtagsWithAI(caption)` | Gemini generates 12–15 trending hashtags |
-| `suggestHashtagsFromCaption(caption)` | Local fallback tokenizer — picks unique words >3 chars, returns first 8 as `#tags` |
-| `getGeminiKeyCount()` | Returns how many Gemini API keys are configured |
-| `getGeminiAvailableCount()` | Returns how many keys are not currently rate-limited |
-
-**Multi-key support:** Configure `GEMINI_API_KEY`, `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3` etc. for parallel automation caption generation. Keys rotate round-robin; a key is skipped if rate-limited (429).
-
-**Size limit:** Media ≤ 10 MB for inline base64 submission.
-
----
-
-### 6.2 Instagram Service
-
-**File:** `apps/api/src/services/instagram.service.ts`
-
-Handles all Meta Graph API interactions: OAuth URL generation, code exchange, account listing, single/carousel/video/reel publishing, collaborator ID resolution.
-
-**Video poll:** 24 attempts × 5s = 120s max before timeout.
-
-**Scopes:** `pages_show_list`, `instagram_basic`, `instagram_content_publish`, `pages_read_engagement`, `business_management`
-
----
-
-### 6.3 Publish Service
-
-**File:** `apps/api/src/services/publish.service.ts`
-
-`publishDraftById(draftId, actorUserId?)` — core publish function.
-
-**Flow:**
-1. Load `PostDraft` + `InstagramAccount` + `MediaAsset[]`
-2. Validate `PUBLIC_API_URL`
-3. For each asset, resolve a public URL (Drive download → local cache → prepend tunnel URL)
-4. Fit image to Instagram aspect ratio via `image-fit.service.ts` if needed
-5. Set draft status = `"posting"`
-6. Build `captionWithHashtags`
-7. Resolve collaborator IDs
-8. Route by post type → reel / video / carousel / single
-9. On success: set status = `"live"`, save `igMediaId` + `permalink`
-10. On failure: set status = `"error"`, re-throw
-11. Upsert `PublishJob` record
-
----
-
-### 6.4 Scheduler Service
-
-**File:** `apps/api/src/services/scheduler.service.ts`
-
-- Starts on server boot via `startScheduler()` in `index.ts`
-- Runs every **60 seconds**
-- Queries `PostDraft` where `status = "scheduled"` AND `scheduledFor <= now()`
-- Calls `publishDraftById()` for each due draft
-
----
-
-### 6.5 Folder Automation Service
-
-**File:** `apps/api/src/services/folder-automation.service.ts`
-
-Main automation engine. Called by `POST /automations/:id/fetch` or chained automatically.
-
-**Flow:**
-1. `fetchNewAndOrphanedFiles()` — lists Drive files, finds new ones not yet in DB, finds existing assets not yet linked to a draft
-2. `importFilesToMedia()` — creates `MediaAsset` records for new files, caches thumbnails
-3. `generateCaptionsForBatch()` — parallel Gemini calls (up to 4 concurrent, capped by key count); marks assets `manual_review` on failure
-4. `groupFiles()` — applies `groupingMode` and `carouselMaxSize`
-5. Creates `PostDraft` records with `scheduledFor` from `pickScheduleSlot()`
-6. Updates `AutomationRun` with counts
-7. `triggerNextPendingAutomation()` — chains the next `idle` automation by priority
-
-**Caption failure policy:** No retry. Failed assets get `workflowStatus = "manual_review"` immediately. If all Gemini keys are rate-limited, remaining assets are bulk-marked `manual_review`.
-
----
-
-### 6.6 Auto-Publish Service
-
-**File:** `apps/api/src/services/auto-publish.service.ts`
-
-`autoPublishMediaAsset(assetId)` — creates an ephemeral `PostDraft` from a single asset and calls `publishDraftById()`. Used for direct MediaAsset-level publishing without a pre-existing draft.
-
-`autoPublishCarouselGroup(groupId, businessId)` — same for a carousel group.
-
----
-
-### 6.7 Image Fit Service
-
-**File:** `apps/api/src/services/image-fit.service.ts`
-
-Uses Sharp to ensure images fit Instagram's allowed aspect ratio range (0.8 – 1.91 for feed, 9:16 for Reels).
-
-If an image is outside the range, it pads the canvas with a blurred, zoomed copy of the original as the background.
-
-| Function | Description |
-|---|---|
-| `fitForInstagramFeed(inputPath, outputPath)` | Fits to feed ratio (0.8–1.91), JPEG output |
-| `fitForInstagramReel(inputPath, outputPath)` | Fits to Reels ratio (9:16), JPEG output |
-
-`wasFitted: boolean` in the return value indicates whether padding was applied.
-
----
-
-### 6.8 Google Drive Service
-
-**File:** `apps/api/src/services/google-drive.service.ts`
-
-OAuth flow, folder listing, paginated file listing, thumbnail download and caching, full-file download for publish.
-
-Key functions: `listFolders`, `listFiles`, `getFolderDetail`, `ensureDriveThumbnailCached`, `downloadDriveFileForPublish`
-
----
-
-### 6.9 Smart Timing Service
-
-**File:** `apps/api/src/services/smart-timing.service.ts`
-
-`suggestSmartTime(businessId)` — looks at existing posts and gaps in the schedule, returns `{ suggestedFor: Date }`.
-
----
-
-### 6.10 Audit Service
-
-**File:** `apps/api/src/services/audit.service.ts`
-
-Writes immutable `AuditLog` records. Actions: `media.uploaded`, `media.imported_from_drive`, `media.workflow_updated`, `media.ai_caption_generated`, `media.deleted`, `post_draft.created`, `post.published`, `post_draft.deleted`.
-
----
-
-## 7. API Routes Summary
-
-### Auth (`/auth`)
-| Method | Path | Description |
+| Field | Type | Notes |
 |---|---|---|
-| POST | `/auth/bootstrap` | Create first super_admin (one-time) |
-| POST | `/auth/login` | Login, returns JWT + user + memberships |
-| GET | `/auth/me` | Validate token, return current user |
+| `businessId` | ObjectId → Business | |
+| `postDraftId` | ObjectId → PostDraft | |
+| `actorUserId` | ObjectId → User | set for manual publish |
+| `status` | `"completed" \| "failed"` | |
+| `attempts` | Number | |
+| `processedAt` | Date | |
 
-### Business (`/businesses`)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/businesses` | List all businesses |
-| POST | `/businesses` | Create business |
-| POST | `/businesses/members` | Create user + membership |
+### 4.11 AnalyticsLike
 
-### Media (`/media`)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/media` | List all media assets for businessId |
-| GET | `/media/:id` | Get single asset + relatedGroupAssets |
-| POST | `/media/upload` | Local file upload (multipart) |
-| POST | `/media/import-from-drive` | Import Drive file metadata |
-| PATCH | `/media/:id` | Update workflow fields |
-| DELETE | `/media/:id` | Delete asset |
-| POST | `/media/:id/generate-caption` | AI caption via Gemini |
-| POST | `/media/:id/ensure-thumbnail` | Ensure cached thumbnail |
+```
+Collection: analyticslikes
+File: models/AnalyticsLike.ts
+```
 
-### Posts (`/posts`)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/posts` | List post drafts for businessId |
-| POST | `/posts` | Create post draft |
-| PATCH | `/posts/:id` | Update draft |
-| DELETE | `/posts/:id` | Delete draft |
-| POST | `/posts/:id/schedule` | Schedule a draft |
-| POST | `/posts/:id/suggest-hashtags` | AI hashtag suggestion |
-| POST | `/posts/:id/publish` | Publish immediately |
+Snapshot of like counts for published posts.
 
-### Automations (`/automations`)
-| Method | Path | Description |
+| Field | Type | Notes |
 |---|---|---|
-| GET | `/automations` | List automations for businessId |
-| POST | `/automations` | Create automation |
-| POST | `/automations/preview` | Preview groups + schedule without saving |
-| GET | `/automations/next-priority` | Get next priority number |
-| PATCH | `/automations/:id` | Update automation config |
-| DELETE | `/automations/:id` | Delete automation |
-| POST | `/automations/:id/fetch` | Trigger immediate run |
-| POST | `/automations/:id/pause` | Pause automation |
-| POST | `/automations/:id/resume` | Resume automation |
-| GET | `/automations/:id/runs` | List run history |
+| `businessId` | ObjectId → Business | |
+| `postDraftId` | ObjectId → PostDraft | |
+| `igMediaId` | String | |
+| `likeCount` | Number | |
+| `reachCount` | Number | |
+| `snapshotAt` | Date | |
 
-### Integrations (`/instagram`, `/google-drive`)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/instagram/oauth/start` | Get Facebook OAuth URL |
-| GET | `/instagram/oauth/callback` | Handle OAuth return |
-| GET | `/instagram/accounts` | List connected IG accounts |
-| POST | `/instagram/disconnect` | Disconnect account |
-| GET | `/google-drive/oauth/start` | Get Google OAuth URL |
-| GET | `/google-drive/oauth/callback` | Handle OAuth return |
-| GET | `/google-drive/connections` | List Drive connections |
-| POST | `/google-drive/disconnect` | Disconnect Drive |
-| GET | `/google-drive/folders` | List folders for parent |
-| GET | `/google-drive/folders/:id` | Get folder detail |
-| GET | `/google-drive/files` | List files with pagination |
+### 4.12 AuditLog
 
-### Analytics (`/analytics`)
-| Method | Path | Description |
-|---|---|---|
-| GET | `/analytics/likes` | List like snapshots |
-| POST | `/analytics/likes` | Record new snapshot |
+```
+Collection: auditlogs
+File: models/AuditLog.ts
+```
 
-### Reports (`/reports`)
-| Method | Path | Description |
+Records significant user actions.
+
+| Field | Type | Notes |
 |---|---|---|
-| POST | `/reports/save` | Save a report (admin only) |
-| POST | `/reports/dev-report` | Save a dev report |
+| `businessId` | ObjectId → Business | |
+| `userId` | ObjectId → User | |
+| `action` | String | e.g. `"publish"`, `"schedule"` |
+| `resourceType` | String | e.g. `"PostDraft"` |
+| `resourceId` | ObjectId | |
+| `metadata` | Mixed | additional context |
 
 ---
 
-## 8. Auth & Session System
+## 5. API Routes Reference
 
-1. User logs in → API returns `{ token, user, memberships }`
-2. Frontend: `setSession()` in Zustand → sets axios Authorization header → stores `{ token }` in localStorage
-3. On reload: `hydrateMe()` in `App.tsx` useEffect → reads localStorage token → calls `GET /auth/me` → re-populates store
-4. `ProtectedRoute` checks for `token` in store → if missing, redirect to `/login`
-5. `clearSession()` removes token from axios, localStorage, and Zustand
+Base URL: `http://localhost:4000/api`
 
-**Active Business:** Defaults to `memberships[0].businessId._id`. Switch with `setActiveBusinessId()` (saved to localStorage). Note: `hydrateMe()` currently overrides this with `memberships[0]` on every reload — see BUG-001.
+All routes except bootstrap, login, and OAuth callbacks require `Authorization: Bearer <token>`.
+
+Routes requiring a `businessId` accept it via: URL param → request body → query string. The `requireBusinessRole` middleware validates active membership before passing to the controller.
+
+### 5.1 Health & Scheduler
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/health` | None | Returns `{ success: true }` |
+| POST | `/scheduler/run-now` | JWT | Triggers one scheduler tick immediately |
+| POST | `/scheduler/cron` | `x-cron-secret` header | External cron endpoint (Vercel, etc.) |
+
+### 5.2 Auth — `/api/auth`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/bootstrap` | None | Create the first admin user; disabled after first call |
+| POST | `/login` | None | Returns JWT + user + memberships |
+| GET | `/me` | JWT | Returns current user + active memberships |
+
+**Bootstrap body:**
+```json
+{ "name": "string (min 2)", "email": "valid email", "password": "string (min 6)" }
+```
+
+**Login body:**
+```json
+{ "email": "string", "password": "string" }
+```
+
+**Login response:**
+```json
+{
+  "success": true,
+  "data": {
+    "token": "<JWT>",
+    "user": { "id", "name", "email", "globalRole" },
+    "memberships": [{ "businessId": { "name", "slug", "timezone" }, "role": "admin" }]
+  }
+}
+```
+
+### 5.3 Businesses — `/api/businesses`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT | List all businesses the user is a member of |
+| POST | `/` | JWT | Create a new business |
+| GET | `/:businessId` | JWT + business member | Get one business |
+| PATCH | `/:businessId` | JWT + business member | Update business settings |
+| POST | `/:businessId/members` | JWT + business member | Invite a user to this business |
+| GET | `/:businessId/members` | JWT + business member | List members |
+
+### 5.4 Instagram Integration — `/api/instagram`
+
+OAuth callback is public (Meta redirects without a JWT).
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/oauth/callback` | None | OAuth callback from Meta — exchanges code for token |
+| GET | `/oauth/start` | JWT + biz member | Returns Meta OAuth URL |
+| GET | `/accounts` | JWT + biz member | List connected IG accounts for a business |
+| POST | `/connect` | JWT + biz member | Manually connect an IG account |
+| POST | `/disconnect` | JWT + biz member | Remove an IG account |
+
+### 5.5 Google Drive — `/api/google-drive`
+
+OAuth callback is public (Google redirects without a JWT).
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/oauth/callback` | None | Google OAuth callback — stores refresh token |
+| GET | `/oauth/start` | JWT + biz member | Returns Google OAuth URL |
+| GET | `/connections` | JWT + biz member | List Drive connections for a business |
+| POST | `/connect` | JWT + biz member | Manually connect Drive |
+| POST | `/disconnect` | JWT + biz member | Remove Drive connection |
+| GET | `/folders` | JWT + biz member | Browse top-level Drive folders |
+| GET | `/folders/:id` | JWT + biz member | Browse a specific folder |
+| GET | `/files` | JWT + biz member | List files in a folder (`?folderId=`) |
+| GET | `/preview` | JWT + biz member | Get a signed preview URL for a Drive file |
+
+### 5.6 Media — `/api/media`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT + biz member | List media assets (`?businessId=`) |
+| POST | `/upload` | JWT + biz member | Upload local file (multipart/form-data) |
+| POST | `/import-drive` | JWT + biz member | Import file from Drive into media library |
+| DELETE | `/:id` | JWT + biz member | Delete a media asset |
+
+### 5.7 Posts — `/api/posts`
+
+All routes require `?businessId=` query param or body field.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT + biz member | List post drafts with pagination |
+| POST | `/` | JWT + biz member | Create a post draft |
+| PATCH | `/:id` | JWT + biz member | Update caption, schedule time, status, etc. |
+| DELETE | `/:id` | JWT + biz member | Delete a post draft |
+| POST | `/:id/schedule` | JWT + biz member | Set `scheduledFor` and status → `"scheduled"` |
+| POST | `/:id/publish` | JWT + biz member | Publish immediately (bypasses scheduler) |
+| POST | `/:id/approve-schedule` | JWT + biz member | Approve manual_review draft and reschedule |
+| POST | `/:id/suggest-hashtags` | JWT + biz member | Ask Gemini for hashtag suggestions |
+| GET | `/:id/collaborators` | JWT + biz member | Fetch collaborator accept/decline status from IG |
+
+### 5.8 Folder Automations — `/api/automations`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT | List automations (`?businessId=`) |
+| POST | `/` | JWT | Create an automation |
+| POST | `/preview` | JWT | Preview what an automation config would import |
+| GET | `/next-priority` | JWT | Get suggested priority value for new automation |
+| PATCH | `/:id` | JWT | Update automation config |
+| DELETE | `/:id` | JWT | Delete an automation |
+| POST | `/:id/fetch` | JWT | Trigger automation run immediately |
+| POST | `/:id/pause` | JWT | Pause a running/idle automation |
+| POST | `/:id/resume` | JWT | Resume a paused automation |
+| GET | `/:id/runs` | JWT | List run history for an automation |
+
+### 5.9 Analytics — `/api/analytics`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT + biz member | List like-count snapshots |
+| POST | `/snapshot` | JWT + biz member | Trigger a like-count fetch from IG |
+
+### 5.10 Reports — `/api/reports`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/` | JWT + biz member | Generate a content performance report |
 
 ---
 
-## 9. State Management
+## 6. Core Services
 
-**Zustand (`auth-store.ts`):**
-- `token`, `user`, `memberships`, `activeBusinessId`
-- `setSession`, `clearSession`, `setActiveBusinessId`, `hydrateMe`
+All services live in `apps/api/src/services/`.
 
-**TanStack Query v5 — all server state:**
+### 6.1 `scheduler.service.ts`
 
-| Query Key | Data |
+The heartbeat of the system. Starts on API boot and runs every **60 seconds**.
+
+Each tick calls `runNow()` which runs two tasks in parallel:
+
+1. **`publishDuePosts()`** — queries `PostDraft` for documents where `status = "scheduled"` and `scheduledFor <= now`. Publishes in batches of 3 using `Promise.allSettled` (one failure doesn't block others).
+
+2. **`runPendingAutomations()`** — queries `FolderAutomation` for `status = "idle"`, ordered by `priority ASC`. Runs at most one automation per tick to avoid overwhelming resources.
+
+`runNow()` is also exposed as `POST /api/scheduler/run-now` (requires JWT) and `POST /api/scheduler/cron` (requires `x-cron-secret` header) for external triggers.
+
+### 6.2 `publish.service.ts`
+
+The publish pipeline. Called by the scheduler and by manual publish requests.
+
+**Flow for `publishDraftById(draftId)`:**
+
+1. Load `PostDraft` + `InstagramAccount` + `MediaAsset[]` from DB
+2. Set draft `status = "posting"`
+3. For each media asset, `resolvePublishUrl()`:
+   - **Drive images**: download locally → apply image fitting → serve via tunnel URL
+   - **Drive videos**: try to make public (share link) → fall back to tunnel download
+   - **Local assets**: apply image fitting → serve via `PUBLIC_API_URL`
+4. Call the appropriate IG API function based on `postType`:
+   - `single` → `postSingleMedia()`
+   - `carousel` → `postCarouselMedia()`
+   - `video` → `postVideoMedia()`
+   - `reel` → `postReelsMedia()`
+5. On success: set status → `"live"`, store `igMediaId` + `permalink`, update linked `MediaAsset` records to `workflowStatus: "live"`, fire-and-forget thumbnail fetch
+6. On failure:
+   - `retryCount < 2`: reschedule +5 minutes, keep `status = "scheduled"`
+   - `retryCount >= 2`: set `status = "error"`, `needsManualReview = true`; if automation-linked, pause the automation
+7. Revoke any temporary Drive share permissions (in `finally`)
+8. Write a `PublishJob` audit record
+
+### 6.3 `folder-automation.service.ts`
+
+Executes a FolderAutomation:
+
+1. Fetch files from the Drive folder (skips already-imported unless `reprocessImported = true`)
+2. Group files into posts based on `groupingMode`
+3. Generate AI captions for each group via `ai.service.ts`
+4. Create `MediaAsset` + `PostDraft` records
+5. Assign `scheduledFor` based on `cadenceMode`
+6. Update automation `status` and `lastFetchedAt`
+
+### 6.4 `ai.service.ts`
+
+Wraps the Gemini API with multi-key rotation:
+
+- **`ApiKeyManager`** — holds all keys found in env vars matching `GEMINI_API_KEY*`. Rotates on rate-limit (429/503/RESOURCE_EXHAUSTED), cooling down the failed key for 60 seconds before trying the next.
+- **`generateInstagramCaptionFromMedia()`** — single image/video → caption + hashtags. Uses `gemini-2.5-flash` with `temperature: 0.8`.
+- **`generateCaptionForCarousel()`** — up to 8 images sent inline → cohesive carousel caption. Falls back to single-image on first slide if carousel parse fails.
+- **`suggestHashtagsWithAI()`** — caption text in → 15–20 targeted hashtags out. Falls back to keyword extraction if AI unavailable.
+- **`extractCaptionResult()`** — three-pass parser that handles markdown fences, leading prose, truncated JSON, and partial responses from Gemini.
+
+Model: `gemini-2.5-flash` via `https://generativelanguage.googleapis.com/v1beta/models/…`
+
+### 6.5 `instagram.service.ts`
+
+Wraps Meta Graph API calls:
+
+- `postSingleMedia(igUserId, accessToken, imageUrl, caption, collaborators?)` — create + publish container
+- `postCarouselMedia(...)` — create child containers → carousel container → publish
+- `postVideoMedia(...)` — async video upload → poll for ready → publish
+- `postReelsMedia(...)` — same as video but uses Reels media type
+- `fetchCollaboratorStatus(igMediaId, accessToken)` — get accept/decline for each tagged collaborator
+- `sanitizeCollaborators(handles)` — strip `@` prefix, filter empty
+
+### 6.6 `google-drive.service.ts`
+
+Wraps Google Drive API v3:
+
+- OAuth token refresh via stored `refreshToken`
+- File listing with pagination
+- Thumbnail URL caching
+- `downloadDriveFileForPublish()` — downloads file to local `uploads/drive-cache/`
+- `makeFilePublicForPublish()` — creates an `anyone/reader` share permission; returns download URL
+- `revokeFilePublicAccess()` — removes the temporary permission after publish
+
+### 6.7 `image-fit.service.ts`
+
+Uses Sharp to fit images to Instagram's 4:5 portrait ratio (1080×1350):
+
+- Resizes the image to fit within the target canvas
+- Fills the remaining area with a blurred, stretched version of the original as background
+- Outputs JPEG to `uploads/fitted-cache/<businessId>/<assetId>.jpg`
+- Stores `fittedFilePath`, `fittedPublicUrl`, `fitDimensions` on the `MediaAsset`
+
+### 6.8 `smart-timing.service.ts`
+
+Suggests optimal publish times based on historical engagement patterns. Currently advisory (stored as `smartTimingSuggestedFor`); the user can accept or set their own time.
+
+### 6.9 `audit.service.ts`
+
+Writes `AuditLog` records for publish, schedule, and other significant actions.
+
+---
+
+## 7. Frontend Pages
+
+All pages are in `apps/web/src/pages/`.
+
+| Page file | Route | Purpose |
+|---|---|---|
+| `LoginPage.tsx` | `/login` | Email/password login |
+| `SetupPage.tsx` | `/setup` | First-run: bootstrap admin creation |
+| `DashboardPage.tsx` | `/` | Overview metrics and recent posts |
+| `BusinessesPage.tsx` | `/businesses` | List/manage business workspaces |
+| `IntegrationsPage.tsx` | `/integrations` | Connect Instagram + Google Drive |
+| `DriveBrowserPage.tsx` | `/drive` | Browse Drive folders, import to queue |
+| `MediaPage.tsx` | `/media` | Local upload + media asset library |
+| `PostsPage.tsx` | `/posts` | Content queue: list, filter, schedule drafts |
+| `StudioPage.tsx` | `/studio/:id` | Per-post editor: caption, hashtags, schedule, publish |
+| `AutomationsPage.tsx` | `/automations` | Create/manage Folder Automations |
+| `AnalyticsPage.tsx` | `/analytics` | Like-count and reach snapshots |
+
+**State management:** Zustand store in `store/auth-store.ts` holds `user`, `token`, and active `businessId`. TanStack Query handles all API caching, background refetches, and mutation state.
+
+**API client:** `store/api.ts` — Axios instance with JWT interceptor from store.
+
+---
+
+## 8. Auth & Middleware
+
+### JWT Authentication
+
+Tokens are signed with `JWT_SECRET`, expire per `JWT_EXPIRES_IN` (default `7d`). The payload contains `{ sub: userId, email, globalRole }`.
+
+Tokens are sent as `Authorization: Bearer <token>` headers by the frontend.
+
+### `requireAuth` middleware
+
+Extracts Bearer token from `Authorization` header → verifies with `verifyToken()` → attaches `req.user`. Returns `401` if missing or invalid.
+
+### `requireBusinessRole(...roles)` middleware
+
+1. Extracts `businessId` from `req.params.businessId || req.body.businessId || req.query.businessId`
+2. Queries `Membership` for `(businessId, userId, status: "active")`
+3. Returns `403` if no active membership
+4. Attaches `req.businessId` and `req.membershipRole` for downstream use
+
+All roles currently normalize to `"admin"` — the system was designed for future role expansion.
+
+### Error handling
+
+`utils/api-error.ts` — `ApiError(statusCode, message)` class. The `errorHandler` middleware in `middlewares/error-handler.ts` catches these and returns `{ success: false, message }` JSON.
+
+`utils/async-handler.ts` — wraps async route handlers to automatically pass errors to `next()`.
+
+---
+
+## 9. Environment Variables
+
+Validated via Zod on startup (`apps/api/src/config/env.ts`). The server exits with an error log if any required variable is missing or malformed.
+
+### Required
+
+| Variable | Description |
 |---|---|
-| `["queue-overview", businessId]` | All media (Dashboard) |
-| `["queue", businessId]` | All media (Queue table) |
-| `["media", businessId]` | All media (Posts page picker) |
-| `["queue-detail", id, businessId]` | Single asset detail |
-| `["posts", businessId]` | All post drafts |
-| `["ig-accounts", businessId]` | Instagram accounts |
-| `["drive-connections", businessId]` | Drive connections |
-| `["businesses"]` | All businesses |
-| `["likes", businessId]` | Like snapshots |
-| `["automations", businessId]` | Folder automations |
-| `["drive-folder-detail", businessId, folderId]` | Folder name |
+| `MONGODB_URI` | MongoDB connection string (e.g. `mongodb://localhost:27017/postlane`) |
+| `JWT_SECRET` | Min 12 chars — signs all JWT tokens |
 
----
+### Optional with defaults
 
-## 10. Environment Variables
-
-### Backend (`apps/api/.env`)
-
-| Variable | Required | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `MONGODB_URI` | Yes | MongoDB connection string |
-| `JWT_SECRET` | Yes | Token signing secret |
-| `GEMINI_API_KEY` | Yes | Primary Google AI key |
-| `GEMINI_API_KEY_2` | No | Additional key (automation parallel runs) |
-| `GEMINI_API_KEY_3` | No | Additional key |
-| `FACEBOOK_APP_ID` | Yes | Meta App ID |
-| `FACEBOOK_APP_SECRET` | Yes | Meta App Secret (not an access token) |
-| `FACEBOOK_REDIRECT_URI` | Yes | Must match Meta app settings exactly |
-| `FACEBOOK_GRAPH_API_VERSION` | No | Default `v25.0` |
-| `FACEBOOK_SCOPES` | No | Default as in README |
-| `GOOGLE_CLIENT_ID` | Yes | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | Yes | Google OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | Yes | Google OAuth callback URL |
-| `GOOGLE_DRIVE_SCOPES` | No | Default: drive.file + drive.metadata.readonly |
-| `PUBLIC_API_URL` | Yes | Publicly accessible API URL (Cloudflare Tunnel) |
-| `PORT` | No | Default `4000` |
-| `UPLOAD_DIR` | No | Default `uploads/` |
+| `PORT` | `4000` | API listen port |
+| `NODE_ENV` | `development` | `development \| test \| production` |
+| `JWT_EXPIRES_IN` | `7d` | JWT lifetime |
+| `CLIENT_URL` | `http://localhost:5173` | Frontend origin (used in CORS + OAuth callbacks) |
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated allowed CORS origins |
+| `UPLOAD_DIR` | `uploads` | Local file storage directory (relative to `apps/api/`) |
+| `FACEBOOK_GRAPH_API_VERSION` | `v25.0` | Meta Graph API version |
+| `FACEBOOK_SCOPES` | `instagram_basic,instagram_content_publish,…` | IG OAuth scopes |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:4000/api/google-drive/oauth/callback` | |
+| `FACEBOOK_REDIRECT_URI` | `http://localhost:4000/api/instagram/oauth/callback` | |
+
+### Feature keys
+
+| Variable | Description |
+|---|---|
+| `PUBLIC_API_URL` | **Required for Instagram publishing.** HTTPS URL reachable from Meta servers (Cloudflare tunnel URL or production domain). |
+| `GEMINI_API_KEY` | Primary Gemini API key for AI captions |
+| `GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`, … | Additional keys for parallel automation runs. Any env var matching `GEMINI_API_KEY*` is loaded. |
+| `GOOGLE_CLIENT_ID` | Google OAuth app client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth app client secret |
+| `FACEBOOK_APP_ID` | Meta app ID |
+| `FACEBOOK_APP_SECRET` | Meta app secret |
+| `SCHEDULER_SECRET` | If set, the `/api/scheduler/cron` endpoint requires `x-cron-secret: <value>` |
 
 ### Frontend (`apps/web/.env`)
 
-| Variable | Required | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `VITE_API_URL` | No | API base URL. Default: current host port 4000 |
+| `VITE_API_URL` | `http://localhost:4000/api` | API base URL. If blank, auto-targets `window.location.host:4000`. |
 
 ---
 
-## 11. Known Bugs
+## 10. Deployment
 
-### BUG-001 — activeBusinessId not restored on reload
-**File:** `apps/web/src/store/auth-store.ts`
-`hydrateMe()` always sets `activeBusinessId` to `memberships[0]._id`, ignoring the value saved in localStorage by `setActiveBusinessId()`. Users with multiple businesses always land on business #0 after reload.
+### Local (Docker + Cloudflare Tunnel)
 
----
+```bash
+npm install
+docker compose up -d        # start MongoDB on port 27017
+./start.sh                  # start tunnel + API + web
+```
 
-### BUG-002 — MediaAsset pre-validate hook overrides "reel" postType
-**File:** `apps/api/src/models/MediaAsset.ts`
-The pre-validate hook always sets `postType` from media type + groupId. If a user sets `postType = "reel"`, the hook overrides it back to `"video"`. Reel type cannot be preserved on `MediaAsset`.
-**Fix:** Skip inference when `postType = "reel"` is explicitly set.
+`start.sh` workflow:
+1. Starts a Cloudflare Quick Tunnel → `localhost:4000`
+2. Captures the generated `*.trycloudflare.com` URL
+3. Writes it to `apps/api/.env` as `PUBLIC_API_URL`
+4. Starts API (`npm run dev:api`) and web (`npm run dev:web`) via concurrently
 
----
+The tunnel URL changes on every restart; `start.sh` updates `.env` automatically.
 
-### BUG-003 — Scheduler does not rate-limit concurrent publishes
-**File:** `apps/api/src/services/scheduler.service.ts`
-Multiple due posts at the same time are processed sequentially. Video polls block for up to 2 minutes each. At high volume, the scheduler tick can stall for a very long time.
+Frontend: `http://localhost:5173`
+API: `http://localhost:4000`
 
----
+### Docker Container
 
-### BUG-004 — Post Detail Modal state does not sync when post prop updates
-**File:** `apps/web/src/pages/PostsPage.tsx`
-Form state is initialized from `post` prop in `useState()`. If the parent refetches a newer version, the modal retains stale values.
+```dockerfile
+# Dockerfile builds the API only
+FROM node:20-alpine
+WORKDIR /app
+COPY . .
+RUN npm ci && npm run build --workspace api
+CMD ["node", "apps/api/dist/index.js"]
+```
 
----
+### Fly.io
 
-### BUG-005 — `window.confirm` used for destructive actions in Queue
-**File:** `apps/web/src/pages/QueuePage.tsx`
-Native browser `confirm()` cannot be styled and may be blocked in some environments. Should be replaced with an inline confirmation UI.
+```bash
+fly launch    # uses fly.toml
+fly deploy
+```
 
----
+Set secrets: `fly secrets set MONGODB_URI=… JWT_SECRET=… GEMINI_API_KEY=…`
 
-### BUG-006 — PublishJob "failed" status never set
-**File:** `apps/api/src/services/publish.service.ts`
-`PublishJob` supports `"failed"` status but only `"queued"` and `"completed"` are ever written. On publish error the job is left as `"queued"`.
+### Render
 
----
+`render.yaml` defines a web service. Set all env vars in the Render dashboard.
 
-## 12. Improvement Opportunities
+### Vercel (Cron Only)
 
-| ID | Area | Description |
-|---|---|---|
-| IMP-001 | UI | Business switcher in AppShell — `setActiveBusinessId` exists but no UI calls it |
-| IMP-002 | Analytics | Auto-fetch like/reach from IG Graph API for live posts |
-| IMP-003 | Performance | Server-side pagination for Content Queue (currently fetches all assets) |
-| IMP-004 | Performance | Server-side pagination for Posts page |
-| IMP-005 | Automations | Show per-asset caption retry UI in manual_review state |
-| IMP-006 | Automations | Webhook trigger for Drive file additions (instead of manual Fetch Now) |
-| IMP-007 | Publishing | Decouple video status polling from sync publish flow (exponential backoff) |
-| IMP-008 | Storage | TTL-based cleanup job for `uploads/publish-cache/` and `uploads/drive-thumbnails/` |
-| IMP-009 | Auth | Token refresh / session invalidation flow |
-| IMP-010 | Auth | Invite flow + reset-password flow |
-| IMP-011 | UI | PublishJob history + retry failed jobs screen |
-| IMP-012 | UI | Smart timing suggestion displayed to users in the scheduling UI |
+`vercel.json` configures the `/api/scheduler/cron` endpoint as a Vercel Cron Job. The API itself should be hosted elsewhere (Fly/Render/self-hosted); Vercel just triggers the scheduler endpoint on a schedule.
+
+Set `SCHEDULER_SECRET` in both the API host and Vercel env, and configure the cron to send `x-cron-secret: <value>`.
 
 ---
 
-## 13. Recommended Next Features
+## 11. Scheduler & Automation Engine
 
-| Priority | Feature | Complexity |
-|---|---|---|
-| High | Fix BUG-001 (activeBusinessId restore on reload) | Low |
-| High | Business switcher dropdown in AppShell sidebar | Low |
-| High | Manual review queue — bulk approve/edit/retry for automation-failed captions | Medium |
-| Medium | Real Instagram analytics fetch (like/reach per post via Graph API) | Medium |
-| Medium | Audit log viewer page | Medium |
-| Medium | Queue server-side pagination | Medium |
-| Medium | Publish-cache cleanup job | Low |
-| Low | Instagram Story publishing support | High |
-| Low | Replace `window.confirm` with modal confirms throughout | Low |
-| Low | Webhook-driven automation trigger (Drive → new file → auto-run) | High |
-| Low | Multi-language caption tone selector in automation wizard | Medium |
+### Scheduler Tick (every 60 seconds)
+
+```
+startScheduler()
+  └─ setInterval(runNow, 60000)
+       ├─ publishDuePosts()        → finds scheduled drafts past their time
+       │    └─ publishDraftById()  → up to 3 concurrent publishes per tick
+       └─ runPendingAutomations()  → runs highest-priority idle automation
+            └─ runAutomation()     → fire-and-forget (sets status "running")
+```
+
+### Automation Execution Flow
+
+```
+runAutomation(id)
+  1. Set status = "running"
+  2. Fetch Drive folder file list
+  3. Filter: skip already-imported (driveFileId unique index)
+  4. Group files by groupingMode:
+       "one_per_file"  → each file = one post
+       "batch_size"    → N files per carousel
+       "subfolder"     → files in same sub-folder = one carousel
+  5. For each group:
+       a. Download/read media
+       b. Generate caption via Gemini (with key rotation)
+       c. Create MediaAsset records
+       d. Create PostDraft with scheduledFor based on cadenceMode:
+            "interval"    → now + (intervalValue * intervalUnit)
+            "daily_slots" → next upcoming slot time today or tomorrow
+            "smart"       → smart-timing service suggestion
+  6. Set status = "idle" (or "finished" if folder fully processed)
+  7. Write AutomationRun audit record
+```
+
+### Priority System
+
+Automations have a `priority` field (lower = runs first). The scheduler picks the highest-priority idle automation per tick. `GET /api/automations/next-priority` returns `max(existing priority) + 10` as a suggested value for new automations.
+
+### Manual Review Escalation
+
+When a PostDraft fails after 2 retry attempts:
+- Draft status → `"error"`, `needsManualReview = true`
+- If automation-linked → automation status → `"manual_review"` (stops the automation)
+- User can review in Studio, fix the issue, then call `POST /:id/approve-schedule` to reschedule
 
 ---
 
-*End of Documentation*
+## 12. AI Caption System (Gemini)
+
+### Key Pool Architecture
+
+All env vars starting with `GEMINI_API_KEY` are collected at startup into an `ApiKeyManager`. This enables parallel automation runs to use different keys.
+
+Rotation logic:
+- On `429 / 503 / RESOURCE_EXHAUSTED`: mark current key as on 60-second cooldown, rotate to next
+- On `400 / API_KEY_INVALID`: mark with 30-second cooldown, rotate
+- On network/parse errors: throw immediately (no retry)
+- If all keys are on cooldown: throw `"All Gemini API keys are rate-limited"`
+
+### Caption Generation
+
+**Single image/video** (`generateInstagramCaptionFromMedia`):
+- Sends media as base64 inline data
+- Prompt: 3–5 line caption with emojis, 20 targeted hashtags in specified tone
+- Model: `gemini-2.5-flash`, `temperature: 0.8`, `maxOutputTokens: 2048`
+
+**Carousel** (`generateCaptionForCarousel`):
+- Sends up to 8 images (skips any >10MB)
+- Prompt: cohesive multi-slide narrative, 25 hashtags
+- Falls back to single-image on first slide if carousel JSON parse fails
+
+**Hashtag suggestions** (`suggestHashtagsWithAI`):
+- Caption text only (no media)
+- Returns 15–20 hashtags
+- Falls back to keyword extraction from caption text if AI unavailable
+
+### Response Parsing
+
+Three-pass extraction handles malformed Gemini output:
+1. Strip markdown code fences → JSON parse
+2. Find first `{` to last `}` → JSON parse
+3. Regex extract `"caption": "..."` + `"hashtags": [...]`
+
+---
+
+## 13. Instagram Publishing Pipeline
+
+### Prerequisites
+
+- `PUBLIC_API_URL` must be an HTTPS URL (Cloudflare tunnel or production domain)
+- Instagram account must have `igUserId` and `accessToken` set (via OAuth flow)
+- At least one `MediaAsset` linked to the draft
+
+### Publish Flow
+
+```
+POST /api/posts/:id/publish
+  └─ publishDraftById(id)
+       ├─ Load draft, account, assets
+       ├─ draft.status = "posting"
+       ├─ resolvePublishUrl() for each asset:
+       │    Drive image  → download → fit → tunnel URL
+       │    Drive video  → try public share → fall back to download
+       │    Local image  → fit → tunnel URL
+       │    Local video  → tunnel URL
+       ├─ Call IG API:
+       │    postType="single"   → create image container → publish
+       │    postType="carousel" → create N child containers → carousel container → publish
+       │    postType="video"    → create video container → poll 15s until FINISHED → publish
+       │    postType="reel"     → same as video, REELS media product type
+       ├─ draft.status = "live", store igMediaId + permalink
+       ├─ Update MediaAsset.workflowStatus = "live"
+       ├─ Fetch + store collaborator status (non-blocking)
+       ├─ Fire-and-forget: fetch IG thumbnail
+       └─ Revoke temp Drive permissions (always, in finally)
+```
+
+### Error & Retry
+
+| Attempt | Outcome |
+|---|---|
+| 1st failure | `retryCount = 1`, reschedule in +5 minutes, status stays `"scheduled"` |
+| 2nd failure | `retryCount = 2`, status → `"error"`, `needsManualReview = true` |
+
+If the draft was created by an automation, the automation also gets paused (`status = "manual_review"`) so it does not keep spawning drafts for the same broken account.
+
+---
+
+## 14. Google Drive Integration
+
+### OAuth Flow
+
+1. Frontend calls `GET /api/google-drive/oauth/start?businessId=…`
+2. Backend returns Google OAuth URL with `drive.file` + `drive.metadata.readonly` scopes
+3. User completes consent → Google redirects to `GET /api/google-drive/oauth/callback?code=…`
+4. Backend exchanges code for tokens, stores `refreshToken` in `GoogleDriveConnection`
+
+### File Browsing
+
+- `GET /api/google-drive/folders` — top-level folders
+- `GET /api/google-drive/folders/:id` — folder contents
+- `GET /api/google-drive/files?folderId=…` — file list with metadata + thumbnail URLs
+- `GET /api/google-drive/preview?fileId=…` — signed short-lived URL for file preview
+
+### Import
+
+`POST /api/media/import-drive` creates a `MediaAsset` record linked to a Drive file. The file is not downloaded at import time — only when publishing.
+
+### Deduplication
+
+The compound unique index `(businessId, driveFileId)` on `MediaAsset` prevents the same Drive file being imported twice into the same business.
+
+---
+
+## 15. Image Fitting (Sharp)
+
+Instagram enforces an aspect ratio range of 4:5 (portrait) to 1.91:1 (landscape). Images outside this range are rejected.
+
+The fitting service (`image-fit.service.ts`) handles this automatically:
+
+1. Read original image dimensions
+2. If within allowed ratio: pass through unchanged
+3. If outside: composite the image centered on a 1080×1350 (4:5) canvas, with the original blurred and stretched as background fill
+4. Output: JPEG at 95% quality
+5. Cache stored at `uploads/fitted-cache/<businessId>/<assetId>.jpg`
+6. Cache is checked before re-fitting: if `fittedFilePath` exists and file is present, skip re-fit
+
+The fitted URL is served publicly via Express static middleware at `/uploads/…` and used as the media URL in the Meta API call.
+
+---
+
+## 16. Error Handling & Retry Logic
+
+### API Errors
+
+`ApiError(statusCode, message)` — thrown in controllers/services. The global `errorHandler` middleware formats these as:
+
+```json
+{ "success": false, "message": "Error description" }
+```
+
+Zod validation failures are caught in controllers and return `400` with field-level detail.
+
+### Publish Retry
+
+See section 13. Retry is automatic (scheduler re-picks drafts with `status = "scheduled"` and past `scheduledFor`).
+
+### Gemini Key Rotation
+
+See section 12. Failed keys cool down rather than being discarded, so they recover automatically.
+
+### Scheduler Isolation
+
+Each scheduler tick uses `Promise.allSettled` so a single publish failure does not prevent other drafts from publishing in the same tick.
+
+---
+
+## 17. How-To Guides
+
+### Bootstrap a fresh install
+
+1. Run `npm install && docker compose up -d && ./start.sh`
+2. In another tab: `curl -X POST http://localhost:4000/api/auth/bootstrap -H "Content-Type: application/json" -d '{"name":"Admin","email":"you@example.com","password":"yourpassword"}'`
+3. Open `http://localhost:5173` and log in
+
+Bootstrap is disabled after the first user is created.
+
+### Connect Instagram
+
+1. Log in → go to **Integrations**
+2. Click **Connect Instagram** → complete Meta OAuth
+3. Instagram account appears in the Integrations page
+4. All future post drafts can target this account
+
+### Connect Google Drive
+
+1. Log in → go to **Integrations**
+2. Click **Connect Google Drive** → complete Google OAuth
+3. Go to **Drive Browser** to browse folders and import media
+
+### Manually publish a post
+
+1. Go to **Content Queue** → select a draft
+2. Open in **Studio** (edit caption, hashtags, add collaborators)
+3. Click **Publish Now** — or set a date/time and click **Schedule**
+4. Scheduled posts publish automatically within 60 seconds of their scheduled time
+
+### Create a Folder Automation
+
+1. Go to **Automations** → **New Automation**
+2. Pick a Drive folder
+3. Choose: target IG account, grouping mode, cadence, brand voice, emoji setting
+4. Save → automation runs on the next scheduler tick if there are unprocessed files
+
+### Manually trigger the scheduler
+
+```bash
+curl -X POST http://localhost:4000/api/scheduler/run-now \
+  -H "Authorization: Bearer <token>"
+```
+
+Or with the cron secret (no JWT needed):
+
+```bash
+curl -X POST http://localhost:4000/api/scheduler/cron \
+  -H "x-cron-secret: <SCHEDULER_SECRET>"
+```
+
+### Add multiple Gemini API keys
+
+Add to `apps/api/.env`:
+```
+GEMINI_API_KEY=key1
+GEMINI_API_KEY_2=key2
+GEMINI_API_KEY_3=key3
+```
+
+The AI service loads all of them automatically. When one is rate-limited the system rotates to the next without delay.
+
+### Handle a manual_review post
+
+1. A post in `manual_review` state means it failed twice during publish
+2. Open the draft in Studio
+3. Check `lastError` (shown in UI) — fix the underlying issue (reconnect IG, check tunnel URL, etc.)
+4. Click **Approve & Reschedule** to queue it again
+
+---
+
+*Documentation generated from source: `apps/api/src/` (controllers, models, services, routes, middlewares, config) + `apps/web/src/` (pages, store).*
